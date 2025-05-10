@@ -14,6 +14,14 @@ from urllib3.util.retry import Retry
 import aiohttp
 import asyncio
 from pathlib import Path
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Configure logging
 logging.basicConfig(
@@ -207,42 +215,182 @@ class AdvancedWebScraper:
             logging.error(f"Error scraping {url}: {str(e)}")
             return {}
 
-# Example usage
+class JavaScriptScraper(AdvancedWebScraper):
+    def __init__(
+        self,
+        rate_limit: float = 1.0,
+        max_retries: int = 3,
+        proxy_list: Optional[List[str]] = None,
+        timeout: int = 30,
+        headless: bool = True,
+        wait_time: int = 10
+    ):
+        """
+        Initialize the JavaScript-enabled web scraper.
+        
+        Args:
+            rate_limit (float): Minimum time between requests in seconds
+            max_retries (int): Maximum number of retry attempts
+            proxy_list (List[str]): List of proxy URLs
+            timeout (int): Request timeout in seconds
+            headless (bool): Run browser in headless mode
+            wait_time (int): Maximum time to wait for elements to load
+        """
+        super().__init__(rate_limit, max_retries, proxy_list, timeout)
+        self.wait_time = wait_time
+        self.driver = self._setup_driver(headless)
+
+    def _setup_driver(self, headless: bool) -> webdriver.Chrome:
+        """Set up and configure the Chrome WebDriver."""
+        chrome_options = Options()
+        if headless:
+            chrome_options.add_argument('--headless')
+        
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument(f'user-agent={self.ua.random}')
+        
+        if self.proxy_list:
+            proxy = random.choice(self.proxy_list)
+            chrome_options.add_argument(f'--proxy-server={proxy}')
+        
+        service = Service(ChromeDriverManager().install())
+        return webdriver.Chrome(service=service, options=chrome_options)
+
+    def scrape_dynamic_website(
+        self,
+        url: str,
+        selectors: Optional[Dict[str, str]] = None,
+        wait_for: Optional[str] = None,
+        export_format: str = "json"
+    ) -> Union[Dict[str, List[str]], None]:
+        """
+        Scrape a JavaScript-rendered website.
+        
+        Args:
+            url (str): The URL to scrape
+            selectors (Dict[str, str]): Dictionary of name -> CSS selector pairs
+            wait_for (str): CSS selector to wait for before scraping
+            export_format (str): Format to export data (json, csv, excel)
+            
+        Returns:
+            Dict[str, List[str]]: Dictionary of scraped data
+        """
+        try:
+            self._respect_rate_limit()
+            self.driver.get(url)
+            
+            # Wait for specific element if provided
+            if wait_for:
+                try:
+                    WebDriverWait(self.driver, self.wait_time).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, wait_for))
+                    )
+                except TimeoutException:
+                    logging.warning(f"Timeout waiting for element: {wait_for}")
+            
+            # Additional wait for dynamic content
+            time.sleep(2)
+            
+            # Get page source after JavaScript execution
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            results = {}
+            
+            if selectors:
+                for name, selector in selectors.items():
+                    elements = soup.select(selector)
+                    results[name] = [elem.get_text(strip=True) for elem in elements]
+            else:
+                results['content'] = [soup.get_text(strip=True)]
+            
+            # Export the results
+            self._export_results(results, export_format)
+            
+            return results
+            
+        except WebDriverException as e:
+            logging.error(f"Error scraping {url}: {str(e)}")
+            return None
+        finally:
+            # Don't close the driver here to allow for multiple requests
+            pass
+
+    def take_screenshot(self, url: str, filename: Optional[str] = None) -> Optional[str]:
+        """
+        Take a screenshot of the webpage.
+        
+        Args:
+            url (str): The URL to capture
+            filename (str): Optional custom filename
+            
+        Returns:
+            str: Path to the screenshot file
+        """
+        try:
+            self.driver.get(url)
+            time.sleep(2)  # Wait for page to load
+            
+            if not filename:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"screenshot_{timestamp}.png"
+            
+            screenshot_dir = Path("screenshots")
+            screenshot_dir.mkdir(exist_ok=True)
+            
+            filepath = screenshot_dir / filename
+            self.driver.save_screenshot(str(filepath))
+            logging.info(f"Screenshot saved to {filepath}")
+            
+            return str(filepath)
+            
+        except WebDriverException as e:
+            logging.error(f"Error taking screenshot of {url}: {str(e)}")
+            return None
+
+    def close(self):
+        """Close the WebDriver and clean up resources."""
+        if hasattr(self, 'driver'):
+            self.driver.quit()
+
+    def __del__(self):
+        """Destructor to ensure WebDriver is closed."""
+        self.close()
+
+# Update example usage
 if __name__ == "__main__":
-    # Initialize the scraper with custom settings
-    scraper = AdvancedWebScraper(
-        rate_limit=2.0,  # 2 seconds between requests
+    # Initialize the JavaScript scraper
+    js_scraper = JavaScriptScraper(
+        rate_limit=2.0,
         max_retries=3,
         proxy_list=[
             "http://proxy1.example.com:8080",
             "http://proxy2.example.com:8080"
         ],
-        timeout=30
+        timeout=30,
+        headless=True,
+        wait_time=10
     )
     
-    # Example selectors
-    selectors = {
-        "headings": "h1, h2, h3",
-        "paragraphs": "p",
-        "links": "a"
-    }
-    
-    # Scrape a single website
-    results = scraper.scrape_website(
-        "https://example.com",
-        selectors=selectors,
-        export_format="json"
-    )
-    
-    # Scrape multiple websites asynchronously
-    urls = [
-        "https://example.com",
-        "https://example.org",
-        "https://example.net"
-    ]
-    
-    async def main():
-        results = await scraper.scrape_multiple_websites(urls, selectors)
-        print(json.dumps(results, indent=2))
-    
-    asyncio.run(main()) 
+    try:
+        # Example selectors for a dynamic website
+        selectors = {
+            "headings": "h1, h2, h3",
+            "paragraphs": "p",
+            "links": "a"
+        }
+        
+        # Scrape a JavaScript-rendered website
+        results = js_scraper.scrape_dynamic_website(
+            "https://example.com",
+            selectors=selectors,
+            wait_for=".main-content",  # Wait for this element to load
+            export_format="json"
+        )
+        
+        # Take a screenshot
+        js_scraper.take_screenshot("https://example.com")
+        
+    finally:
+        # Always close the scraper
+        js_scraper.close() 
