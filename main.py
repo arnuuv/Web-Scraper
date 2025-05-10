@@ -10,3 +10,15 @@ from langchain_anthropic import ChatAnthropic
 from dotenv import load_dotenv
 import asyncio
 import os
+
+load_dotenv()
+
+model = ChatAnthropic(model="claude-3-5-sonnet-20240620", api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+async def main():
+    server = Server(StdioServerParameters())
+    await server.start()
+
+    client = stdio_client()
+    session = ClientSession(client, server.mcp_server)
+    
