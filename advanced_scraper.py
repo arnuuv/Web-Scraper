@@ -5,7 +5,7 @@ import random
 import json
 import csv
 import pandas as pd
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from datetime import datetime
 import logging
 from fake_useragent import UserAgent
@@ -20,7 +20,9 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException, ElementClickInterceptedException
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 
 # Configure logging
@@ -357,10 +359,215 @@ class JavaScriptScraper(AdvancedWebScraper):
         """Destructor to ensure WebDriver is closed."""
         self.close()
 
+class InteractiveScraper(JavaScriptScraper):
+    def __init__(
+        self,
+        rate_limit: float = 1.0,
+        max_retries: int = 3,
+        proxy_list: Optional[List[str]] = None,
+        timeout: int = 30,
+        headless: bool = True,
+        wait_time: int = 10
+    ):
+        """Initialize the interactive web scraper."""
+        super().__init__(rate_limit, max_retries, proxy_list, timeout, headless, wait_time)
+        self.actions = ActionChains(self.driver)
+
+    def wait_and_click(self, selector: str, timeout: Optional[int] = None) -> bool:
+        """
+        Wait for an element to be clickable and click it.
+        
+        Args:
+            selector (str): CSS selector of the element
+            timeout (int): Optional custom timeout
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            timeout = timeout or self.wait_time
+            element = WebDriverWait(self.driver, timeout).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+            )
+            element.click()
+            return True
+        except (TimeoutException, ElementClickInterceptedException) as e:
+            logging.error(f"Error clicking element {selector}: {str(e)}")
+            return False
+
+    def fill_form(
+        self,
+        form_data: Dict[str, str],
+        submit_selector: Optional[str] = None
+    ) -> bool:
+        """
+        Fill out a form with the provided data.
+        
+        Args:
+            form_data (Dict[str, str]): Dictionary of field selectors and values
+            submit_selector (str): Optional selector for the submit button
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            for selector, value in form_data.items():
+                element = WebDriverWait(self.driver, self.wait_time).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                element.clear()
+                element.send_keys(value)
+                time.sleep(0.5)  # Small delay between fields
+            
+            if submit_selector:
+                return self.wait_and_click(submit_selector)
+            return True
+            
+        except (TimeoutException, WebDriverException) as e:
+            logging.error(f"Error filling form: {str(e)}")
+            return False
+
+    def scroll_to_element(self, selector: str) -> bool:
+        """
+        Scroll to a specific element on the page.
+        
+        Args:
+            selector (str): CSS selector of the element
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            element = WebDriverWait(self.driver, self.wait_time).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+            )
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+            time.sleep(1)  # Wait for scroll to complete
+            return True
+        except (TimeoutException, WebDriverException) as e:
+            logging.error(f"Error scrolling to element {selector}: {str(e)}")
+            return False
+
+    def infinite_scroll(
+        self,
+        max_scrolls: int = 10,
+        scroll_pause_time: float = 2.0,
+        load_more_selector: Optional[str] = None
+    ) -> bool:
+        """
+        Perform infinite scroll on a page.
+        
+        Args:
+            max_scrolls (int): Maximum number of scrolls to perform
+            scroll_pause_time (float): Time to wait between scrolls
+            load_more_selector (str): Optional selector for "Load More" button
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            last_height = self.driver.execute_script("return document.body.scrollHeight")
+            scroll_count = 0
+            
+            while scroll_count < max_scrolls:
+                # Scroll down
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(scroll_pause_time)
+                
+                # Click "Load More" if selector provided
+                if load_more_selector:
+                    try:
+                        load_more = self.driver.find_element(By.CSS_SELECTOR, load_more_selector)
+                        if load_more.is_displayed():
+                            load_more.click()
+                            time.sleep(scroll_pause_time)
+                    except WebDriverException:
+                        pass
+                
+                # Calculate new scroll height
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                
+                # Break if no more content
+                if new_height == last_height:
+                    break
+                    
+                last_height = new_height
+                scroll_count += 1
+            
+            return True
+            
+        except WebDriverException as e:
+            logging.error(f"Error during infinite scroll: {str(e)}")
+            return False
+
+    def handle_popup(self, popup_selector: str, close_selector: str) -> bool:
+        """
+        Handle popup windows or modals.
+        
+        Args:
+            popup_selector (str): Selector for the popup element
+            close_selector (str): Selector for the close button
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Wait for popup
+            WebDriverWait(self.driver, self.wait_time).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, popup_selector))
+            )
+            
+            # Click close button
+            return self.wait_and_click(close_selector)
+            
+        except (TimeoutException, WebDriverException) as e:
+            logging.error(f"Error handling popup: {str(e)}")
+            return False
+
+    def extract_dynamic_table(
+        self,
+        table_selector: str,
+        wait_for_rows: bool = True
+    ) -> Optional[List[Dict[str, str]]]:
+        """
+        Extract data from a dynamic table.
+        
+        Args:
+            table_selector (str): CSS selector for the table
+            wait_for_rows (bool): Whether to wait for rows to load
+            
+        Returns:
+            List[Dict[str, str]]: List of dictionaries containing table data
+        """
+        try:
+            if wait_for_rows:
+                WebDriverWait(self.driver, self.wait_time).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, f"{table_selector} tr"))
+                )
+            
+            table = self.driver.find_element(By.CSS_SELECTOR, table_selector)
+            headers = [th.text for th in table.find_elements(By.TAG_NAME, "th")]
+            
+            data = []
+            rows = table.find_elements(By.TAG_NAME, "tr")[1:]  # Skip header row
+            
+            for row in rows:
+                cells = row.find_elements(By.TAG_NAME, "td")
+                row_data = {}
+                for header, cell in zip(headers, cells):
+                    row_data[header] = cell.text
+                data.append(row_data)
+            
+            return data
+            
+        except WebDriverException as e:
+            logging.error(f"Error extracting table data: {str(e)}")
+            return None
+
 # Update example usage
 if __name__ == "__main__":
-    # Initialize the JavaScript scraper
-    js_scraper = JavaScriptScraper(
+    # Initialize the interactive scraper
+    interactive_scraper = InteractiveScraper(
         rate_limit=2.0,
         max_retries=3,
         proxy_list=[
@@ -373,24 +580,38 @@ if __name__ == "__main__":
     )
     
     try:
-        # Example selectors for a dynamic website
-        selectors = {
-            "headings": "h1, h2, h3",
-            "paragraphs": "p",
-            "links": "a"
+        # Example: Fill out a login form
+        login_data = {
+            "#username": "test_user",
+            "#password": "test_pass"
         }
         
-        # Scrape a JavaScript-rendered website
-        results = js_scraper.scrape_dynamic_website(
-            "https://example.com",
-            selectors=selectors,
-            wait_for=".main-content",  # Wait for this element to load
-            export_format="json"
-        )
+        # Navigate to login page
+        interactive_scraper.driver.get("https://example.com/login")
         
-        # Take a screenshot
-        js_scraper.take_screenshot("https://example.com")
+        # Fill and submit form
+        if interactive_scraper.fill_form(login_data, "#login-button"):
+            # Wait for login to complete
+            time.sleep(2)
+            
+            # Handle any popup
+            interactive_scraper.handle_popup(".welcome-popup", ".close-button")
+            
+            # Scroll to content
+            interactive_scraper.scroll_to_element(".main-content")
+            
+            # Perform infinite scroll
+            interactive_scraper.infinite_scroll(
+                max_scrolls=5,
+                scroll_pause_time=2.0,
+                load_more_selector=".load-more-button"
+            )
+            
+            # Extract table data
+            table_data = interactive_scraper.extract_dynamic_table("#data-table")
+            if table_data:
+                print(json.dumps(table_data, indent=2))
         
     finally:
         # Always close the scraper
-        js_scraper.close() 
+        interactive_scraper.close() 
