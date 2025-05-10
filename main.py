@@ -15,10 +15,18 @@ load_dotenv()
 
 model = ChatAnthropic(model="claude-3-5-sonnet-20240620", api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-async def main():
-    server = Server(StdioServerParameters())
+    
+    
+server_params = StdioServerParameters()
+    command = "npx",
+    env = {
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY")
+    }
+    server = Server(server_params)
     await server.start()
 
     client = stdio_client()
     session = ClientSession(client, server.mcp_server)
+    
+    
     
