@@ -1,0 +1,13 @@
+{
+  "name": "web-scraper",
+  "version": "1.0.0",
+  "description": "Advanced web scraper with JavaScript and Python integration",
+  "main": "js_scraper.js",
+  "scripts": {
+    "start": "node js_scraper.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0"
+  }
+} 
