@@ -245,6 +245,81 @@ print(json.dumps(data))
         await this.page.pdf({ path: filePath, format: 'A4', ...options });
         return filePath;
     }
+
+    /**
+     * Advanced auto-scroll with error correction, DOM change detection, and custom end conditions.
+     * @param {Object} options
+     * @param {number} options.maxScrolls - Maximum number of scrolls.
+     * @param {number} options.delay - Delay between scrolls (ms).
+     * @param {number} options.maxRetries - Max retries on error or no new content.
+     * @param {string} [options.untilSelector] - Stop if this selector appears.
+     * @param {function} [options.untilCallback] - Stop if this callback returns true (runs in browser context).
+     * @returns {Promise<{scrolls: number, retries: number, stoppedBy: string}>}
+     */
+    async advancedAutoScroll(options = {}) {
+        const {
+            maxScrolls = 20,
+            delay = 1000,
+            maxRetries = 5,
+            untilSelector = null,
+            untilCallback = null
+        } = options;
+
+        let scrollCount = 0;
+        let retries = 0;
+        let lastHeight = await this.page.evaluate('document.body.scrollHeight');
+        let lastNodeCount = await this.page.evaluate('document.body.getElementsByTagName(\"*\").length');
+        let stoppedBy = 'maxScrolls';
+
+        while (scrollCount < maxScrolls) {
+            try {
+                // Check for end conditions
+                if (untilSelector) {
+                    const found = await this.page.$(untilSelector);
+                    if (found) {
+                        stoppedBy = 'untilSelector';
+                        break;
+                    }
+                }
+                if (untilCallback) {
+                    const shouldStop = await this.page.evaluate(untilCallback);
+                    if (shouldStop) {
+                        stoppedBy = 'untilCallback';
+                        break;
+                    }
+                }
+
+                await this.page.evaluate('window.scrollTo(0, document.body.scrollHeight)');
+                await this.page.waitForTimeout(delay);
+
+                const newHeight = await this.page.evaluate('document.body.scrollHeight');
+                const newNodeCount = await this.page.evaluate('document.body.getElementsByTagName(\"*\").length');
+
+                if (newHeight === lastHeight && newNodeCount === lastNodeCount) {
+                    retries++;
+                    if (retries >= maxRetries) {
+                        stoppedBy = 'maxRetries';
+                        break;
+                    }
+                    await this.page.waitForTimeout(delay * 2);
+                } else {
+                    lastHeight = newHeight;
+                    lastNodeCount = newNodeCount;
+                    scrollCount++;
+                    retries = 0; // Reset retries on success
+                }
+            } catch (error) {
+                console.error(`Advanced auto-scroll error (attempt ${retries + 1}):`, error);
+                retries++;
+                if (retries >= maxRetries) {
+                    stoppedBy = 'error';
+                    break;
+                }
+                await this.page.waitForTimeout(delay * 2);
+            }
+        }
+        return { scrolls: scrollCount, retries, stoppedBy };
+    }
 }
 
 // Example usage
@@ -303,6 +378,16 @@ async function main() {
         
         console.log('Scraping completed successfully');
         console.log(pythonData);
+        
+        // Advanced auto-scroll
+        const result = await scraper.advancedAutoScroll({
+            maxScrolls: 30,
+            delay: 1200,
+            maxRetries: 7,
+            untilSelector: '.end-of-content',
+            untilCallback: null
+        });
+        console.log('Auto-scroll result:', result);
         
     } catch (error) {
         console.error('Scraping failed:', error);
