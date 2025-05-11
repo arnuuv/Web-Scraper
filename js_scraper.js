@@ -317,3 +317,32 @@ if (require.main === module) {
 }
 
 module.exports = JSScraper; 
+
+async function autoScrollWithRetry(page, maxScrolls = 10, delay = 1000, maxRetries = 3) {
+    let scrollCount = 0;
+    let retries = 0;
+    let lastHeight = await page.evaluate('document.body.scrollHeight');
+
+    while (scrollCount < maxScrolls) {
+        try {
+            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)');
+            await page.waitForTimeout(delay);
+
+            const newHeight = await page.evaluate('document.body.scrollHeight');
+            if (newHeight === lastHeight) {
+                break;
+            }
+            lastHeight = newHeight;
+            scrollCount++;
+            retries = 0; // Reset retries on success
+        } catch (error) {
+            console.error(`Auto-scroll error (attempt ${retries + 1}):`, error);
+            retries++;
+            if (retries >= maxRetries) {
+                console.error('Max auto-scroll retries reached. Stopping.');
+                break;
+            }
+            await page.waitForTimeout(delay * 2); // Wait longer before retrying
+        }
+    }
+} 
