@@ -184,6 +184,67 @@ print(json.dumps(data))
             await this.browser.close();
         }
     }
+
+    // Download a file from a link selector
+    async downloadFile(linkSelector, downloadPath = './downloads') {
+        const fs = require('fs');
+        const path = require('path');
+        await fs.promises.mkdir(downloadPath, { recursive: true });
+        const client = await this.page.target().createCDPSession();
+        await client.send('Page.setDownloadBehavior', {
+            behavior: 'allow',
+            downloadPath: path.resolve(downloadPath)
+        });
+        await this.page.click(linkSelector);
+        // Wait for download to finish (simple version)
+        await this.page.waitForTimeout(5000);
+    }
+
+    // Cookie management
+    async getCookies() {
+        return await this.page.cookies();
+    }
+    async setCookie(cookie) {
+        await this.page.setCookie(cookie);
+    }
+    async deleteCookie(cookieName) {
+        await this.page.deleteCookie({ name: cookieName });
+    }
+
+    // Screenshot of a specific element
+    async captureElementScreenshot(selector, options = {}) {
+        try {
+            const element = await this.page.$(selector);
+            if (!element) throw new Error('Element not found');
+            const filePath = options.path || `element_${Date.now()}.png`;
+            await element.screenshot({ path: filePath });
+            return filePath;
+        } catch (error) {
+            console.error(`Element screenshot error: ${error.message}`);
+            return null;
+        }
+    }
+
+    // Emulate a device (mobile/tablet)
+    async emulateDevice(deviceName = 'iPhone X') {
+        const puppeteer = require('puppeteer');
+        const devices = puppeteer.KnownDevices || puppeteer.devices;
+        const device = devices[deviceName];
+        if (!device) throw new Error('Device not found');
+        await this.page.emulate(device);
+    }
+
+    // Set geolocation
+    async setGeolocation(latitude, longitude) {
+        await this.page.setGeolocation({ latitude, longitude });
+    }
+
+    // Save page as PDF
+    async saveAsPDF(options = {}) {
+        const filePath = options.path || `page_${Date.now()}.pdf`;
+        await this.page.pdf({ path: filePath, format: 'A4', ...options });
+        return filePath;
+    }
 }
 
 // Example usage
