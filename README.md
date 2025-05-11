@@ -8,11 +8,17 @@ A powerful web scraping solution that combines JavaScript (Puppeteer) and Python
 
 - Full browser automation
 - Dynamic content handling
+- **Advanced auto-scroll with error correction**
 - Resource optimization
 - Network request monitoring
-- Screenshot capture
+- Screenshot capture (full page and element)
 - Infinite scroll support
 - Custom JavaScript execution
+- File download support
+- Cookie management (get/set/delete)
+- Device emulation and geolocation
+- Save page as PDF
+- **150+ DOM and scraping utility functions** (see `webscraper_features.js`)
 - Python integration
 
 ### Python Scraper
@@ -24,6 +30,7 @@ A powerful web scraping solution that combines JavaScript (Puppeteer) and Python
 - Async scraping capabilities
 - Interactive element handling
 - Form submission support
+- **Example main.py for quick start**
 
 ## Installation
 
@@ -48,7 +55,23 @@ npm install
 
 ## Usage
 
-### JavaScript Scraper
+### Python Scraper Example (from main.py)
+
+```python
+from main import WebScraper
+
+scraper = WebScraper()
+url = "https://example.com"
+selectors = {
+    "headings": "h1, h2, h3",
+    "paragraphs": "p",
+    "links": "a"
+}
+results = scraper.scrape_website(url, selectors)
+print(results)
+```
+
+### JavaScript Scraper Example
 
 ```javascript
 const JSScraper = require("./js_scraper.js");
@@ -67,110 +90,118 @@ async function runScraper() {
     const data = await scraper.extractData({
       headings: "h1, h2, h3",
       paragraphs: "p",
+      links: "a",
     });
 
-    // Handle infinite scroll
-    await scraper.handleInfiniteScroll({
-      maxScrolls: 5,
+    // Advanced auto-scroll with error correction
+    const scrollResult = await scraper.advancedAutoScroll({
+      maxScrolls: 20,
       delay: 1000,
+      maxRetries: 5,
+      untilSelector: ".end-of-content",
     });
+    console.log("Auto-scroll result:", scrollResult);
 
-    // Take a screenshot
-    await scraper.captureScreenshot({
-      fullPage: true,
-    });
+    // Download a file
+    await scraper.downloadFile("a.download-link");
+
+    // Cookie management
+    const cookies = await scraper.getCookies();
+    await scraper.setCookie({ name: "test", value: "123" });
+    await scraper.deleteCookie("test");
+
+    // Screenshot of a specific element
+    await scraper.captureElementScreenshot(".main-content");
+
+    // Device emulation
+    await scraper.emulateDevice("iPhone X");
+
+    // Set geolocation
+    await scraper.setGeolocation(37.7749, -122.4194);
+
+    // Save page as PDF
+    await scraper.saveAsPDF({ path: "page.pdf" });
+
+    // Use utility functions from webscraper_features.js in browser context
+    // Example: await scraper.page.evaluate(getAllLinks);
+
+    // Take a full page screenshot
+    await scraper.captureScreenshot({ fullPage: true });
+
+    console.log(data);
   } finally {
     await scraper.close();
   }
 }
 ```
 
-### Python Scraper
+### Utility Functions
 
-```python
-from advanced_scraper import AdvancedWebScraper, InteractiveScraper
+See `webscraper_features.js` for **150+ ready-to-use DOM and scraping helpers**, such as:
 
-# Basic scraping
-scraper = AdvancedWebScraper(
-    rate_limit=2.0,
-    max_retries=3
-)
+- `getAllLinks()`
+- `getAllImages()`
+- `getTextBySelector(selector)`
+- `waitForElement(selector, timeout)`
+- `scrollToBottom()`
+- ...and many more!
 
-# Interactive scraping
-interactive_scraper = InteractiveScraper(
-    headless=True,
-    wait_time=10
-)
+You can use these in Puppeteer like:
 
-# Scrape with form handling
-form_data = {
-    "#username": "user123",
-    "#password": "pass123"
-}
-interactive_scraper.fill_form(form_data, "#submit-button")
+```javascript
+const links = await scraper.page.evaluate(getAllLinks);
 ```
+
+### Integration
+
+You can export data from JS to Python and vice versa. See the `exportToPython` method in `js_scraper.js`.
 
 ## Features in Detail
 
 ### JavaScript Scraper Features
 
 1. **Browser Automation**
-
    - Headless mode support
    - Custom viewport settings
    - User agent rotation
    - Resource blocking
-
 2. **Data Extraction**
-
    - CSS selector-based extraction
    - Custom JavaScript execution
    - Dynamic content handling
    - Structured data output
-
 3. **Performance**
    - Resource optimization
    - Request interception
    - Network monitoring
    - Error handling
+4. **Advanced Features**
+   - Auto-scroll with error correction
+   - File download
+   - Cookie management
+   - Device emulation
+   - Geolocation
+   - Save as PDF
+   - Element screenshot
+   - 150+ DOM helpers
 
 ### Python Scraper Features
 
 1. **Advanced Scraping**
-
    - Rate limiting
    - Proxy support
    - Retry mechanism
    - Async capabilities
-
 2. **Data Export**
-
    - JSON export
    - CSV export
    - Excel export
    - Custom formatting
-
 3. **Interactive Features**
    - Form handling
    - Popup management
    - Dynamic table extraction
    - Infinite scroll support
-
-## Integration
-
-The scrapers can be used together:
-
-```python
-# Python code
-import subprocess
-import json
-
-def run_js_scraper():
-    result = subprocess.run(['node', 'js_scraper.js'],
-                          capture_output=True,
-                          text=True)
-    return json.loads(result.stdout)
-```
 
 ## Configuration
 
