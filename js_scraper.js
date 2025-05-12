@@ -320,6 +320,27 @@ print(json.dumps(data))
         }
         return { scrolls: scrollCount, retries, stoppedBy };
     }
+
+    /**
+     * Download and save all images on the current page to a local directory.
+     * @param {string} dir - Directory to save images (default: './images')
+     */
+    async saveAllImages(dir = './images') {
+        await fs.promises.mkdir(dir, { recursive: true });
+        const imageUrls = await this.page.evaluate(() =>
+            Array.from(document.images).map(img => img.src)
+        );
+        for (const url of imageUrls) {
+            try {
+                const view = await this.page.goto(url);
+                const fileName = path.join(dir, path.basename(new URL(url).pathname));
+                await fs.promises.writeFile(fileName, await view.buffer());
+                console.log(`Saved: ${fileName}`);
+            } catch (err) {
+                console.error(`Failed to save image ${url}:`, err.message);
+            }
+        }
+    }
 }
 
 // Example usage
