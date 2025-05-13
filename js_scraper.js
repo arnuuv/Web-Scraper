@@ -341,6 +341,39 @@ print(json.dumps(data))
             }
         }
     }
+
+    /**
+     * Wait for a network request matching a URL substring or regex and return its response body.
+     * @param {string|RegExp} urlMatch - Substring or regex to match request URL.
+     * @param {number} timeout - Timeout in ms (default 10000).
+     * @returns {Promise<string|undefined>} - The response body as text, or undefined if not found.
+     */
+    async waitForNetworkResponse(urlMatch, timeout = 10000) {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.page.removeListener('response', onResponse);
+                resolve(undefined);
+            }, timeout);
+
+            const onResponse = async (response) => {
+                const url = response.url();
+                const match = typeof urlMatch === 'string'
+                    ? url.includes(urlMatch)
+                    : urlMatch.test(url);
+                if (match) {
+                    clearTimeout(timer);
+                    this.page.removeListener('response', onResponse);
+                    try {
+                        resolve(await response.text());
+                    } catch (err) {
+                        resolve(undefined);
+                    }
+                }
+            };
+
+            this.page.on('response', onResponse);
+        });
+    }
 }
 
 // Example usage
