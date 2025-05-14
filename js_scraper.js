@@ -382,6 +382,154 @@ print(json.dumps(data))
     async execute_js(url, js_code, wait_for) {
         // Implementation of execute_js method
     }
+
+    /**
+     * Fill and submit a form with validation and error handling
+     * @param {Object} options
+     * @param {string} options.formSelector - CSS selector for the form
+     * @param {Object} options.fields - Object mapping field selectors to values
+     * @param {boolean} options.submit - Whether to submit the form after filling
+     * @param {number} options.timeout - Timeout for form operations
+     * @param {Function} options.validate - Custom validation function
+     * @returns {Promise<{success: boolean, errors: Array}>}
+     */
+    async handleForm(options = {}) {
+        const {
+            formSelector,
+            fields = {},
+            submit = true,
+            timeout = 5000,
+            validate = null
+        } = options;
+
+        const errors = [];
+        try {
+            // Wait for form to be present
+            await this.page.waitForSelector(formSelector, { timeout });
+
+            // Fill each field
+            for (const [selector, value] of Object.entries(fields)) {
+                try {
+                    const element = await this.page.$(selector);
+                    if (!element) {
+                        errors.push(`Field not found: ${selector}`);
+                        continue;
+                    }
+
+                    // Handle different input types
+                    const type = await element.evaluate(el => el.type);
+                    const tagName = await element.evaluate(el => el.tagName.toLowerCase());
+
+                    if (tagName === 'select') {
+                        await this.page.select(selector, value);
+                    } else if (type === 'checkbox' || type === 'radio') {
+                        if (value) {
+                            await element.click();
+                        }
+                    } else if (type === 'file') {
+                        await element.uploadFile(value);
+                    } else {
+                        await element.type(value, { delay: 100 });
+                    }
+                } catch (error) {
+                    errors.push(`Error filling ${selector}: ${error.message}`);
+                }
+            }
+
+            // Run custom validation if provided
+            if (validate) {
+                const validationResult = await this.page.evaluate(validate);
+                if (!validationResult.valid) {
+                    errors.push(...validationResult.errors);
+                }
+            }
+
+            // Submit form if requested and no errors
+            if (submit && errors.length === 0) {
+                const form = await this.page.$(formSelector);
+                await form.evaluate(form => form.submit());
+                await this.page.waitForNavigation({ timeout });
+            }
+
+            return {
+                success: errors.length === 0,
+                errors
+            };
+        } catch (error) {
+            errors.push(`Form handling error: ${error.message}`);
+            return { success: false, errors };
+        }
+    }
+
+    /**
+     * Handle dynamic form fields that appear based on user input
+     * @param {Object} options
+     * @param {string} options.triggerSelector - Selector for element that triggers dynamic fields
+     * @param {string} options.fieldSelector - Selector for dynamic fields
+     * @param {number} options.timeout - Timeout for waiting for fields
+     * @returns {Promise<Array>} - Array of dynamic field elements
+     */
+    async handleDynamicFormFields(options = {}) {
+        const {
+            triggerSelector,
+            fieldSelector,
+            timeout = 5000
+        } = options;
+
+        try {
+            // Click trigger element
+            await this.page.click(triggerSelector);
+
+            // Wait for dynamic fields to appear
+            await this.page.waitForSelector(fieldSelector, { timeout });
+
+            // Get all dynamic fields
+            const fields = await this.page.$$(fieldSelector);
+            return fields;
+        } catch (error) {
+            console.error('Error handling dynamic form fields:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Handle form validation and error messages
+     * @param {Object} options
+     * @param {string} options.formSelector - Form selector
+     * @param {string} options.errorSelector - Selector for error messages
+     * @returns {Promise<{valid: boolean, errors: Array}>}
+     */
+    async validateForm(options = {}) {
+        const {
+            formSelector,
+            errorSelector = '.error-message, .invalid-feedback'
+        } = options;
+
+        try {
+            // Trigger form validation
+            await this.page.evaluate(selector => {
+                const form = document.querySelector(selector);
+                if (form) form.reportValidity();
+            }, formSelector);
+
+            // Wait for potential error messages
+            await this.page.waitForTimeout(500);
+
+            // Get all error messages
+            const errors = await this.page.evaluate(selector => {
+                const errorElements = document.querySelectorAll(selector);
+                return Array.from(errorElements).map(el => el.textContent.trim());
+            }, errorSelector);
+
+            return {
+                valid: errors.length === 0,
+                errors
+            };
+        } catch (error) {
+            console.error('Form validation error:', error);
+            return { valid: false, errors: [error.message] };
+        }
+    }
 }
 
 // Example usage
@@ -451,6 +599,50 @@ async function main() {
         });
         console.log('Auto-scroll result:', result);
         
+        // Example form handling
+        const formResult = await scraper.handleForm({
+            formSelector: '#login-form',
+            fields: {
+                '#username': 'testuser',
+                '#password': 'testpass',
+                '#remember-me': true
+            },
+            submit: true,
+            validate: () => {
+                const username = document.querySelector('#username').value;
+                const password = document.querySelector('#password').value;
+                const errors = [];
+                
+                if (username.length < 3) {
+                    errors.push('Username must be at least 3 characters');
+                }
+                if (password.length < 6) {
+                    errors.push('Password must be at least 6 characters');
+                }
+                
+                return {
+                    valid: errors.length === 0,
+                    errors
+                };
+            }
+        });
+
+        console.log('Form submission result:', formResult);
+
+        // Handle dynamic form fields
+        const dynamicFields = await scraper.handleDynamicFormFields({
+            triggerSelector: '#add-field',
+            fieldSelector: '.dynamic-input'
+        });
+
+        // Validate form
+        const validationResult = await scraper.validateForm({
+            formSelector: '#login-form',
+            errorSelector: '.error-message'
+        });
+
+        console.log('Form validation result:', validationResult);
+
     } catch (error) {
         console.error('Scraping failed:', error);
     } finally {
