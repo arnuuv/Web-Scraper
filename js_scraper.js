@@ -374,6 +374,14 @@ print(json.dumps(data))
             this.page.on('response', onResponse);
         });
     }
+
+    async scrape_dynamic_content(url, selectors, wait_for, timeout, headless, export_format) {
+        // Implementation of scrape_dynamic_content method
+    }
+
+    async execute_js(url, js_code, wait_for) {
+        // Implementation of execute_js method
+    }
 }
 
 // Example usage
