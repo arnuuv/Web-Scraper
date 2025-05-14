@@ -599,7 +599,7 @@ async function main() {
         });
         console.log('Auto-scroll result:', result);
         
-        // Example form handling
+        // Basic form handling
         const formResult = await scraper.handleForm({
             formSelector: '#login-form',
             fields: {
@@ -607,27 +607,34 @@ async function main() {
                 '#password': 'testpass',
                 '#remember-me': true
             },
-            submit: true,
-            validate: () => {
-                const username = document.querySelector('#username').value;
-                const password = document.querySelector('#password').value;
-                const errors = [];
-                
-                if (username.length < 3) {
-                    errors.push('Username must be at least 3 characters');
-                }
-                if (password.length < 6) {
-                    errors.push('Password must be at least 6 characters');
-                }
-                
-                return {
-                    valid: errors.length === 0,
-                    errors
-                };
-            }
+            submit: true
         });
 
         console.log('Form submission result:', formResult);
+
+        // Form with custom validation
+        const formResult = await scraper.handleForm({
+            formSelector: '#signup-form',
+            fields: {
+                '#email': 'test@example.com',
+                '#password': 'securepass',
+                '#terms': true
+            },
+            validate: () => {
+                const email = document.querySelector('#email').value;
+                const password = document.querySelector('#password').value;
+                const errors = [];
+                
+                if (!email.includes('@')) {
+                    errors.push('Invalid email format');
+                }
+                if (password.length < 8) {
+                    errors.push('Password too short');
+                }
+                
+                return { valid: errors.length === 0, errors };
+            }
+        });
 
         // Handle dynamic form fields
         const dynamicFields = await scraper.handleDynamicFormFields({
@@ -637,8 +644,8 @@ async function main() {
 
         // Validate form
         const validationResult = await scraper.validateForm({
-            formSelector: '#login-form',
-            errorSelector: '.error-message'
+            formSelector: '#my-form',
+            errorSelector: '.error-message, .invalid-feedback'
         });
 
         console.log('Form validation result:', validationResult);
