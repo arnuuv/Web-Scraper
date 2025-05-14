@@ -16,6 +16,12 @@ import pandas as pd
 import time
 from typing import Dict, List, Optional, Union
 from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 load_dotenv()
 
@@ -26,9 +32,119 @@ class WebScraper:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        self.rate_limit = rate_limit  # seconds between requests
+        self.rate_limit = rate_limit
         self.max_retries = max_retries
         self.last_request_time = 0
+        self.driver = None
+
+    def _setup_selenium(self, headless: bool = True):
+        """Set up Selenium WebDriver with Chrome options."""
+        chrome_options = Options()
+        if headless:
+            chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument(f'user-agent={self.headers["User-Agent"]}')
+        self.driver = webdriver.Chrome(options=chrome_options)
+
+    def _wait_for_element(self, selector: str, timeout: int = 10):
+        """Wait for an element to be present on the page."""
+        try:
+            element = WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+            )
+            return element
+        except TimeoutException:
+            print(f"Timeout waiting for element: {selector}")
+            return None
+
+    def scrape_dynamic_content(
+        self,
+        url: str,
+        selectors: Dict[str, str],
+        wait_for: Optional[str] = None,
+        timeout: int = 10,
+        headless: bool = True,
+        export_format: str = "json",
+        export_filename: Optional[str] = None
+    ) -> Dict[str, List[str]]:
+        """
+        Scrape dynamic content from JavaScript-rendered pages using Selenium.
+        
+        Args:
+            url (str): The URL to scrape
+            selectors (Dict[str, str]): Dictionary of name -> CSS selector pairs
+            wait_for (Optional[str]): CSS selector to wait for before scraping
+            timeout (int): Maximum time to wait for elements (seconds)
+            headless (bool): Whether to run browser in headless mode
+            export_format (str): Format to export data
+            export_filename (Optional[str]): Custom filename for export
+            
+        Returns:
+            Dict[str, List[str]]: Dictionary of scraped data
+        """
+        try:
+            if not self.driver:
+                self._setup_selenium(headless)
+            
+            self.driver.get(url)
+            
+            # Wait for specified element if provided
+            if wait_for:
+                self._wait_for_element(wait_for, timeout)
+            
+            results = {}
+            for name, selector in selectors.items():
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                results[name] = [elem.text.strip() for elem in elements]
+            
+            # Export the results
+            self._export_results(results, export_format, export_filename)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error scraping dynamic content from {url}: {str(e)}")
+            return {}
+        
+        finally:
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+
+    def execute_js(self, url: str, js_code: str, wait_for: Optional[str] = None, timeout: int = 10) -> Optional[str]:
+        """
+        Execute custom JavaScript code on a page.
+        
+        Args:
+            url (str): The URL to execute JavaScript on
+            js_code (str): JavaScript code to execute
+            wait_for (Optional[str]): CSS selector to wait for before execution
+            timeout (int): Maximum time to wait for elements (seconds)
+            
+        Returns:
+            Optional[str]: Result of JavaScript execution
+        """
+        try:
+            if not self.driver:
+                self._setup_selenium()
+            
+            self.driver.get(url)
+            
+            if wait_for:
+                self._wait_for_element(wait_for, timeout)
+            
+            result = self.driver.execute_script(js_code)
+            return str(result)
+            
+        except Exception as e:
+            print(f"Error executing JavaScript on {url}: {str(e)}")
+            return None
+            
+        finally:
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
 
     def _respect_rate_limit(self):
         """Ensure we don't exceed the rate limit."""
