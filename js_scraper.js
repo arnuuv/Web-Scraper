@@ -530,6 +530,31 @@ print(json.dumps(data))
             return { valid: false, errors: [error.message] };
         }
     }
+
+    /**
+     * Capture all console logs, warnings, and errors from the page and save to a file.
+     * @param {string} logPath - Path to save the log file (default: './page_console.log')
+     */
+    async captureConsoleLogs(logPath = './page_console.log') {
+        const fs = require('fs');
+        const logs = [];
+        this.page.on('console', msg => {
+            const entry = `[${msg.type().toUpperCase()}] ${msg.text()}`;
+            logs.push(entry);
+        });
+        this.page.on('pageerror', error => {
+            const entry = `[PAGE ERROR] ${error.message}`;
+            logs.push(entry);
+        });
+        this.page.on('error', error => {
+            const entry = `[BROWSER ERROR] ${error.message}`;
+            logs.push(entry);
+        });
+        // Save logs when the page is closed
+        this.page.on('close', async () => {
+            await fs.promises.writeFile(logPath, logs.join('\n'), 'utf-8');
+        });
+    }
 }
 
 // Example usage
@@ -613,7 +638,7 @@ async function main() {
         console.log('Form submission result:', formResult);
 
         // Form with custom validation
-        const formResult = await scraper.handleForm({
+        const signupFormResult = await scraper.handleForm({
             formSelector: '#signup-form',
             fields: {
                 '#email': 'test@example.com',
