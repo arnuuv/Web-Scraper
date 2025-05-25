@@ -228,6 +228,112 @@ class WebScraper:
                 time.sleep(2 ** attempt)  # Exponential backoff
                 continue
 
+    def scrape_paginated_content(
+        self,
+        url: str,
+        selectors: Dict[str, str],
+        pagination_type: str = "infinite_scroll",  # or "load_more" or "page_numbers"
+        max_pages: Optional[int] = None,
+        scroll_pause_time: float = 2.0,
+        load_more_selector: Optional[str] = None,
+        page_number_selector: Optional[str] = None,
+        wait_for: Optional[str] = None,
+        timeout: int = 10,
+        headless: bool = True,
+        export_format: str = "json",
+        export_filename: Optional[str] = None
+    ) -> Dict[str, List[str]]:
+        """
+        Scrape content from paginated pages or infinite scroll websites.
+        
+        Args:
+            url (str): The URL to scrape
+            selectors (Dict[str, str]): Dictionary of name -> CSS selector pairs
+            pagination_type (str): Type of pagination ("infinite_scroll", "load_more", or "page_numbers")
+            max_pages (Optional[int]): Maximum number of pages to scrape
+            scroll_pause_time (float): Time to pause between scrolls
+            load_more_selector (Optional[str]): CSS selector for "Load More" button
+            page_number_selector (Optional[str]): CSS selector for page number links
+            wait_for (Optional[str]): CSS selector to wait for before scraping
+            timeout (int): Maximum time to wait for elements (seconds)
+            headless (bool): Whether to run browser in headless mode
+            export_format (str): Format to export data
+            export_filename (Optional[str]): Custom filename for export
+            
+        Returns:
+            Dict[str, List[str]]: Dictionary of scraped data from all pages
+        """
+        try:
+            if not self.driver:
+                self._setup_selenium(headless)
+            
+            self.driver.get(url)
+            if wait_for:
+                self._wait_for_element(wait_for, timeout)
+            
+            all_results = {name: [] for name in selectors.keys()}
+            current_page = 1
+            last_height = self.driver.execute_script("return document.body.scrollHeight")
+            
+            while True:
+                # Scrape current page
+                for name, selector in selectors.items():
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    all_results[name].extend([elem.text.strip() for elem in elements])
+                
+                # Check if we've reached the maximum number of pages
+                if max_pages and current_page >= max_pages:
+                    break
+                
+                # Handle different pagination types
+                if pagination_type == "infinite_scroll":
+                    # Scroll to bottom
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(scroll_pause_time)
+                    
+                    # Check if we've reached the end
+                    new_height = self.driver.execute_script("return document.body.scrollHeight")
+                    if new_height == last_height:
+                        break
+                    last_height = new_height
+                    
+                elif pagination_type == "load_more" and load_more_selector:
+                    try:
+                        load_more = self._wait_for_element(load_more_selector, timeout)
+                        if not load_more or not load_more.is_displayed():
+                            break
+                        load_more.click()
+                        time.sleep(scroll_pause_time)
+                    except TimeoutException:
+                        break
+                        
+                elif pagination_type == "page_numbers" and page_number_selector:
+                    try:
+                        next_page = self.driver.find_element(By.CSS_SELECTOR, f"{page_number_selector}[data-page='{current_page + 1}']")
+                        if not next_page or not next_page.is_displayed():
+                            break
+                        next_page.click()
+                        time.sleep(scroll_pause_time)
+                    except:
+                        break
+                
+                current_page += 1
+                self._respect_rate_limit()
+            
+            # Export the results
+            self._export_results(all_results, export_format, export_filename)
+            
+            return all_results
+            
+        except Exception as e:
+            print(f"Error scraping paginated content from {url}: {str(e)}")
+            return {}
+            
+        finally:
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+
 async def main():
     server_params = StdioServerParameters(
         command="npx",
