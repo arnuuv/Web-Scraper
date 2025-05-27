@@ -471,6 +471,26 @@ async def main():
     results = scraper.scrape_website(url, selectors)
     print(json.dumps(results, indent=2))
 
+    # Example form submission
+    form_data = {
+        "username": "testuser",
+        "password": "testpass",
+        "remember_me": True,
+        "country": "US",
+        "interests": ["coding", "reading"]  # For multiple select
+    }
+
+    result = scraper.handle_form_submission(
+        url="https://example.com/login",
+        form_selector="#login-form",
+        form_data=form_data,
+        submit_button_selector="#submit-button",
+        wait_for=".dashboard",  # Wait for dashboard to appear after login
+        timeout=10
+    )
+
+    print(result)
+
 if __name__ == "__main__":
     asyncio.run(main())
     
