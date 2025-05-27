@@ -14,7 +14,7 @@ import json
 import csv
 import pandas as pd
 import time
-from typing import Dict, List, Optional, Union, Any, Callable
+from typing import Dict, List, Optional, Union, Any, Callable, Tuple
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -30,10 +30,26 @@ import base64
 from PIL import Image
 import io
 import re
+from enum import Enum
+import operator
 
 load_dotenv()
 
 model = ChatAnthropic(model="claude-3-5-sonnet-20240620", api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+class ConditionOperator(Enum):
+    EQUALS = "equals"
+    NOT_EQUALS = "not_equals"
+    CONTAINS = "contains"
+    NOT_CONTAINS = "not_contains"
+    GREATER_THAN = "greater_than"
+    LESS_THAN = "less_than"
+    GREATER_THAN_EQUALS = "greater_than_equals"
+    LESS_THAN_EQUALS = "less_than_equals"
+    IS_EMPTY = "is_empty"
+    IS_NOT_EMPTY = "is_not_empty"
+    IS_CHECKED = "is_checked"
+    IS_NOT_CHECKED = "is_not_checked"
 
 class WebScraper:
     def __init__(self, rate_limit: float = 1.0, max_retries: int = 3):
@@ -58,6 +74,20 @@ class WebScraper:
             "custom": lambda x, func: func(x)
         }
         self.ajax_timeout = 30  # Default timeout for AJAX requests
+        self.condition_operators = {
+            ConditionOperator.EQUALS: operator.eq,
+            ConditionOperator.NOT_EQUALS: operator.ne,
+            ConditionOperator.CONTAINS: lambda x, y: y in str(x),
+            ConditionOperator.NOT_CONTAINS: lambda x, y: y not in str(x),
+            ConditionOperator.GREATER_THAN: operator.gt,
+            ConditionOperator.LESS_THAN: operator.lt,
+            ConditionOperator.GREATER_THAN_EQUALS: operator.ge,
+            ConditionOperator.LESS_THAN_EQUALS: operator.le,
+            ConditionOperator.IS_EMPTY: lambda x: not str(x).strip(),
+            ConditionOperator.IS_NOT_EMPTY: lambda x: bool(str(x).strip()),
+            ConditionOperator.IS_CHECKED: lambda x: x.is_selected(),
+            ConditionOperator.IS_NOT_CHECKED: lambda x: not x.is_selected()
+        }
 
     def _setup_selenium(self, headless: bool = True):
         """Set up Selenium WebDriver with Chrome options."""
@@ -753,6 +783,155 @@ class WebScraper:
                 "form_submitted": False
             }
 
+    def evaluate_condition(
+        self,
+        field_element: Any,
+        condition: Dict[str, Any]
+    ) -> bool:
+        """
+        Evaluate a condition on a form field.
+        
+        Args:
+            field_element: The form field element to evaluate
+            condition: Dictionary defining the condition
+                {
+                    "operator": ConditionOperator,
+                    "value": Any,
+                    "type": "value|attribute|property"
+                }
+        
+        Returns:
+            bool: True if condition is met, False otherwise
+        """
+        try:
+            operator_name = condition["operator"]
+            expected_value = condition.get("value")
+            value_type = condition.get("type", "value")
+            
+            # Get field value based on type
+            if value_type == "value":
+                field_value = field_element.get_attribute("value")
+            elif value_type == "attribute":
+                field_value = field_element.get_attribute(condition["attribute"])
+            elif value_type == "property":
+                field_value = field_element.get_property(condition["property"])
+            else:
+                field_value = field_element.text
+            
+            # Handle special operators
+            if operator_name in [ConditionOperator.IS_EMPTY, ConditionOperator.IS_NOT_EMPTY,
+                               ConditionOperator.IS_CHECKED, ConditionOperator.IS_NOT_CHECKED]:
+                return self.condition_operators[operator_name](field_element)
+            
+            # Handle comparison operators
+            if operator_name in self.condition_operators:
+                return self.condition_operators[operator_name](field_value, expected_value)
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error evaluating condition: {str(e)}")
+            return False
+
+    def handle_field_dependencies(
+        self,
+        form: Any,
+        dependencies: Dict[str, Dict[str, Any]],
+        timeout: int = 10
+    ) -> None:
+        """
+        Handle form field dependencies and conditional logic.
+        
+        Args:
+            form: The form element
+            dependencies: Dictionary defining field dependencies
+                {
+                    "target_field": {
+                        "conditions": [
+                            {
+                                "field": "source_field_name",
+                                "operator": ConditionOperator,
+                                "value": Any,
+                                "type": "value|attribute|property"
+                            }
+                        ],
+                        "action": {
+                            "type": "show|hide|enable|disable|set_value|clear",
+                            "value": Any  # For set_value action
+                        },
+                        "logic": "and|or"  # How to combine multiple conditions
+                    }
+                }
+            timeout (int): Maximum time to wait for field changes
+        """
+        for target_field, config in dependencies.items():
+            try:
+                # Get target field element
+                target_element = form.find_element(By.NAME, target_field)
+                
+                # Evaluate conditions
+                conditions = config["conditions"]
+                logic = config.get("logic", "and")
+                
+                if logic == "and":
+                    should_apply = all(
+                        self.evaluate_condition(
+                            form.find_element(By.NAME, condition["field"]),
+                            condition
+                        )
+                        for condition in conditions
+                    )
+                else:  # or
+                    should_apply = any(
+                        self.evaluate_condition(
+                            form.find_element(By.NAME, condition["field"]),
+                            condition
+                        )
+                        for condition in conditions
+                    )
+                
+                # Apply action if conditions are met
+                if should_apply:
+                    action = config["action"]
+                    action_type = action["type"]
+                    
+                    if action_type == "show":
+                        self.driver.execute_script(
+                            "arguments[0].style.display = 'block';",
+                            target_element
+                        )
+                    elif action_type == "hide":
+                        self.driver.execute_script(
+                            "arguments[0].style.display = 'none';",
+                            target_element
+                        )
+                    elif action_type == "enable":
+                        target_element.clear()
+                        self.driver.execute_script(
+                            "arguments[0].disabled = false;",
+                            target_element
+                        )
+                    elif action_type == "disable":
+                        self.driver.execute_script(
+                            "arguments[0].disabled = true;",
+                            target_element
+                        )
+                    elif action_type == "set_value":
+                        if target_element.tag_name.lower() == "select":
+                            Select(target_element).select_by_value(str(action["value"]))
+                        elif target_element.get_attribute("type") == "checkbox":
+                            if target_element.is_selected() != (str(action["value"]).lower() == "true"):
+                                target_element.click()
+                        else:
+                            target_element.clear()
+                            target_element.send_keys(str(action["value"]))
+                    elif action_type == "clear":
+                        target_element.clear()
+                
+            except Exception as e:
+                print(f"Error handling dependency for field {target_field}: {str(e)}")
+                continue
+
     def handle_form_submission(
         self,
         url: str,
@@ -766,8 +945,9 @@ class WebScraper:
         captcha_config: Optional[Dict[str, str]] = None,
         dynamic_fields: Optional[Dict[str, Dict[str, Any]]] = None,
         validation_config: Optional[Dict[str, Dict[str, Any]]] = None,
-        is_ajax: bool = False,  # New parameter
-        response_selector: Optional[str] = None  # New parameter
+        is_ajax: bool = False,
+        response_selector: Optional[str] = None,
+        field_dependencies: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Handle form submission on a webpage, including filling fields and submitting.
@@ -813,6 +993,24 @@ class WebScraper:
                 }
             is_ajax (bool): Whether the form submission is handled via AJAX
             response_selector (Optional[str]): CSS selector for the AJAX response element
+            field_dependencies (Optional[Dict[str, Dict[str, Any]]]): Configuration for field dependencies
+                {
+                    "target_field": {
+                        "conditions": [
+                            {
+                                "field": "source_field_name",
+                                "operator": ConditionOperator,
+                                "value": Any,
+                                "type": "value|attribute|property"
+                            }
+                        ],
+                        "action": {
+                            "type": "show|hide|enable|disable|set_value|clear",
+                            "value": Any
+                        },
+                        "logic": "and|or"
+                    }
+                }
             
         Returns:
             Dict[str, Any]: Dictionary containing submission status and response data
@@ -886,6 +1084,10 @@ class WebScraper:
             # Handle dynamic fields if configured
             if dynamic_fields:
                 self.handle_dynamic_form_fields(form, dynamic_fields, timeout)
+            
+            # Handle field dependencies if configured
+            if field_dependencies:
+                self.handle_field_dependencies(form, field_dependencies, timeout)
             
             # Validate form if configured
             if validate_form and validation_config:
