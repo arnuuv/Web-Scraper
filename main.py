@@ -14,7 +14,7 @@ import json
 import csv
 import pandas as pd
 import time
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Callable
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -45,6 +45,18 @@ class WebScraper:
         self.last_request_time = 0
         self.driver = None
         self.captcha_api_key = os.getenv("CAPTCHA_API_KEY")  # Add your CAPTCHA solving service API key
+        self.validation_rules = {
+            "email": lambda x: bool(re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", str(x))),
+            "phone": lambda x: bool(re.match(r"^\+?[\d\s-]{10,}$", str(x))),
+            "url": lambda x: bool(re.match(r"^https?://(?:[\w-]+\.)+[\w-]+(?:/[\w-./?%&=]*)?$", str(x))),
+            "date": lambda x: bool(re.match(r"^\d{4}-\d{2}-\d{2}$", str(x))),
+            "number": lambda x: str(x).replace(".", "").isdigit(),
+            "required": lambda x: bool(str(x).strip()),
+            "min_length": lambda x, min_len: len(str(x)) >= min_len,
+            "max_length": lambda x, max_len: len(str(x)) <= max_len,
+            "pattern": lambda x, pattern: bool(re.match(pattern, str(x))),
+            "custom": lambda x, func: func(x)
+        }
 
     def _setup_selenium(self, headless: bool = True):
         """Set up Selenium WebDriver with Chrome options."""
@@ -503,6 +515,100 @@ class WebScraper:
                 print(f"Error handling dynamic field {field_name}: {str(e)}")
                 continue
 
+    def validate_form_field(
+        self,
+        field_element: Any,
+        validation_rules: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Validate a form field against specified validation rules.
+        
+        Args:
+            field_element: The form field element to validate
+            validation_rules: Dictionary of validation rules to apply
+                {
+                    "type": "email|phone|url|date|number|required|custom",
+                    "min_length": int,
+                    "max_length": int,
+                    "pattern": str,
+                    "custom": Callable,
+                    "error_message": str
+                }
+        
+        Returns:
+            List[str]: List of validation error messages
+        """
+        errors = []
+        field_value = field_element.get_attribute("value")
+        field_type = field_element.get_attribute("type")
+        
+        # Skip validation for empty optional fields
+        if not validation_rules.get("required", False) and not field_value:
+            return errors
+        
+        # Apply validation rules
+        for rule, value in validation_rules.items():
+            if rule == "type" and value in self.validation_rules:
+                if not self.validation_rules[value](field_value):
+                    errors.append(f"Invalid {value} format")
+            
+            elif rule == "min_length":
+                if not self.validation_rules["min_length"](field_value, value):
+                    errors.append(f"Minimum length is {value} characters")
+            
+            elif rule == "max_length":
+                if not self.validation_rules["max_length"](field_value, value):
+                    errors.append(f"Maximum length is {value} characters")
+            
+            elif rule == "pattern":
+                if not self.validation_rules["pattern"](field_value, value):
+                    errors.append("Invalid format")
+            
+            elif rule == "custom":
+                if not self.validation_rules["custom"](field_value, value):
+                    errors.append(validation_rules.get("error_message", "Invalid value"))
+        
+        return errors
+
+    def validate_form(
+        self,
+        form: Any,
+        validation_config: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, List[str]]:
+        """
+        Validate all form fields against specified validation rules.
+        
+        Args:
+            form: The form element to validate
+            validation_config: Dictionary of field validation rules
+                {
+                    "field_name": {
+                        "type": "email|phone|url|date|number|required|custom",
+                        "min_length": int,
+                        "max_length": int,
+                        "pattern": str,
+                        "custom": Callable,
+                        "error_message": str
+                    }
+                }
+        
+        Returns:
+            Dict[str, List[str]]: Dictionary of field names and their validation errors
+        """
+        validation_errors = {}
+        
+        for field_name, rules in validation_config.items():
+            try:
+                field_element = form.find_element(By.NAME, field_name)
+                errors = self.validate_form_field(field_element, rules)
+                if errors:
+                    validation_errors[field_name] = errors
+            except Exception as e:
+                print(f"Error validating field {field_name}: {str(e)}")
+                validation_errors[field_name] = ["Field not found"]
+        
+        return validation_errors
+
     def handle_form_submission(
         self,
         url: str,
@@ -514,7 +620,8 @@ class WebScraper:
         headless: bool = True,
         validate_form: bool = True,
         captcha_config: Optional[Dict[str, str]] = None,
-        dynamic_fields: Optional[Dict[str, Dict[str, Any]]] = None  # New parameter
+        dynamic_fields: Optional[Dict[str, Dict[str, Any]]] = None,
+        validation_config: Optional[Dict[str, Dict[str, Any]]] = None  # New parameter
     ) -> Dict[str, Any]:
         """
         Handle form submission on a webpage, including filling fields and submitting.
@@ -545,6 +652,17 @@ class WebScraper:
                         "trigger_value": "value that triggers this field",
                         "selector": "CSS selector for the dynamic field",
                         "value": "value to set in the dynamic field"
+                    }
+                }
+            validation_config (Optional[Dict[str, Dict[str, Any]]]): Configuration for form validation
+                {
+                    "field_name": {
+                        "type": "email|phone|url|date|number|required|custom",
+                        "min_length": int,
+                        "max_length": int,
+                        "pattern": str,
+                        "custom": Callable,
+                        "error_message": str
                     }
                 }
             
@@ -620,6 +738,16 @@ class WebScraper:
             # Handle dynamic fields if configured
             if dynamic_fields:
                 self.handle_dynamic_form_fields(form, dynamic_fields, timeout)
+            
+            # Validate form if configured
+            if validate_form and validation_config:
+                validation_errors = self.validate_form(form, validation_config)
+                if validation_errors:
+                    return {
+                        "status": "validation_error",
+                        "errors": validation_errors,
+                        "form_submitted": False
+                    }
             
             # Submit form
             if submit_button_selector:
