@@ -21,7 +21,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 from selenium.webdriver.support.select import Select
 from selenium.webdriver.common.keys import Keys
 from pathlib import Path
@@ -57,6 +57,7 @@ class WebScraper:
             "pattern": lambda x, pattern: bool(re.match(pattern, str(x))),
             "custom": lambda x, func: func(x)
         }
+        self.ajax_timeout = 30  # Default timeout for AJAX requests
 
     def _setup_selenium(self, headless: bool = True):
         """Set up Selenium WebDriver with Chrome options."""
@@ -609,6 +610,149 @@ class WebScraper:
         
         return validation_errors
 
+    def wait_for_ajax(
+        self,
+        timeout: Optional[int] = None,
+        check_interval: float = 0.5
+    ) -> bool:
+        """
+        Wait for all AJAX requests to complete.
+        
+        Args:
+            timeout (Optional[int]): Maximum time to wait for AJAX requests
+            check_interval (float): Time between checks for AJAX completion
+            
+        Returns:
+            bool: True if all AJAX requests completed, False if timed out
+        """
+        timeout = timeout or self.ajax_timeout
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                # Check if jQuery is present and no active AJAX requests
+                jquery_ajax = self.driver.execute_script("""
+                    return (typeof jQuery !== 'undefined' && jQuery.active === 0) ||
+                           (typeof angular !== 'undefined' && angular.element(document).injector().get('$http').pendingRequests.length === 0);
+                """)
+                
+                # Check if fetch requests are complete
+                fetch_ajax = self.driver.execute_script("""
+                    return window.fetch === undefined || 
+                           !Array.from(document.querySelectorAll('script')).some(script => 
+                               script.textContent.includes('fetch(') && 
+                               script.textContent.includes('.then(')
+                           );
+                """)
+                
+                if jquery_ajax and fetch_ajax:
+                    return True
+                    
+            except Exception:
+                pass
+                
+            time.sleep(check_interval)
+        
+        return False
+
+    def handle_ajax_form_submission(
+        self,
+        form: Any,
+        submit_button_selector: Optional[str] = None,
+        wait_for_response: bool = True,
+        response_selector: Optional[str] = None,
+        timeout: Optional[int] = None,
+        expected_status: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Handle form submission via AJAX and wait for response.
+        
+        Args:
+            form: The form element
+            submit_button_selector (Optional[str]): CSS selector for the submit button
+            wait_for_response (bool): Whether to wait for AJAX response
+            response_selector (Optional[str]): CSS selector for the response element
+            timeout (Optional[int]): Maximum time to wait for response
+            expected_status (Optional[int]): Expected HTTP status code
+            
+        Returns:
+            Dict[str, Any]: Dictionary containing submission status and response data
+        """
+        try:
+            # Store initial page state
+            initial_url = self.driver.current_url
+            initial_title = self.driver.title
+            
+            # Submit form
+            if submit_button_selector:
+                submit_button = form.find_element(By.CSS_SELECTOR, submit_button_selector)
+                submit_button.click()
+            else:
+                form.submit()
+            
+            if not wait_for_response:
+                return {"status": "submitted", "form_submitted": True}
+            
+            # Wait for AJAX requests to complete
+            if not self.wait_for_ajax(timeout):
+                return {
+                    "status": "timeout",
+                    "error": "AJAX request timed out",
+                    "form_submitted": False
+                }
+            
+            # Check for response element if specified
+            if response_selector:
+                try:
+                    response_element = WebDriverWait(self.driver, timeout or self.ajax_timeout).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, response_selector))
+                    )
+                    response_text = response_element.text
+                except TimeoutException:
+                    return {
+                        "status": "timeout",
+                        "error": "Response element not found",
+                        "form_submitted": False
+                    }
+            else:
+                response_text = None
+            
+            # Check if page changed
+            page_changed = (
+                self.driver.current_url != initial_url or
+                self.driver.title != initial_title
+            )
+            
+            # Get response data
+            response_data = {
+                "status": "success",
+                "form_submitted": True,
+                "page_changed": page_changed,
+                "current_url": self.driver.current_url,
+                "page_title": self.driver.title
+            }
+            
+            if response_text:
+                response_data["response_text"] = response_text
+            
+            # Check for error messages
+            try:
+                error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".error-message, .alert-danger, .validation-error")
+                if error_elements:
+                    response_data["errors"] = [elem.text for elem in error_elements]
+                    response_data["status"] = "error"
+            except:
+                pass
+            
+            return response_data
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "form_submitted": False
+            }
+
     def handle_form_submission(
         self,
         url: str,
@@ -621,7 +765,9 @@ class WebScraper:
         validate_form: bool = True,
         captcha_config: Optional[Dict[str, str]] = None,
         dynamic_fields: Optional[Dict[str, Dict[str, Any]]] = None,
-        validation_config: Optional[Dict[str, Dict[str, Any]]] = None  # New parameter
+        validation_config: Optional[Dict[str, Dict[str, Any]]] = None,
+        is_ajax: bool = False,  # New parameter
+        response_selector: Optional[str] = None  # New parameter
     ) -> Dict[str, Any]:
         """
         Handle form submission on a webpage, including filling fields and submitting.
@@ -665,6 +811,8 @@ class WebScraper:
                         "error_message": str
                     }
                 }
+            is_ajax (bool): Whether the form submission is handled via AJAX
+            response_selector (Optional[str]): CSS selector for the AJAX response element
             
         Returns:
             Dict[str, Any]: Dictionary containing submission status and response data
@@ -750,11 +898,20 @@ class WebScraper:
                     }
             
             # Submit form
-            if submit_button_selector:
-                submit_button = form.find_element(By.CSS_SELECTOR, submit_button_selector)
-                submit_button.click()
+            if is_ajax:
+                return self.handle_ajax_form_submission(
+                    form,
+                    submit_button_selector,
+                    True,
+                    response_selector,
+                    timeout
+                )
             else:
-                form.submit()
+                if submit_button_selector:
+                    submit_button = form.find_element(By.CSS_SELECTOR, submit_button_selector)
+                    submit_button.click()
+                else:
+                    form.submit()
             
             # Wait for response if specified
             if wait_for:
