@@ -32,6 +32,8 @@ import io
 import re
 from enum import Enum
 import operator
+import hashlib
+from cryptography.fernet import Fernet
 
 load_dotenv()
 
@@ -88,6 +90,11 @@ class WebScraper:
             ConditionOperator.IS_CHECKED: lambda x: x.is_selected(),
             ConditionOperator.IS_NOT_CHECKED: lambda x: not x.is_selected()
         }
+        self.encryption_key = os.getenv("ENCRYPTION_KEY")
+        if self.encryption_key:
+            self.fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(self.encryption_key.encode()).digest()))
+        else:
+            self.fernet = None
 
     def _setup_selenium(self, headless: bool = True):
         """Set up Selenium WebDriver with Chrome options."""
@@ -932,6 +939,137 @@ class WebScraper:
                 print(f"Error handling dependency for field {target_field}: {str(e)}")
                 continue
 
+    def mask_sensitive_data(
+        self,
+        data: str,
+        mask_type: str = "full",  # or "partial" or "custom"
+        mask_char: str = "*",
+        visible_chars: int = 4
+    ) -> str:
+        """
+        Mask sensitive data like passwords, credit card numbers, etc.
+        
+        Args:
+            data (str): The data to mask
+            mask_type (str): Type of masking to apply
+            mask_char (str): Character to use for masking
+            visible_chars (int): Number of visible characters for partial masking
+            
+        Returns:
+            str: Masked data
+        """
+        if not data:
+            return data
+            
+        if mask_type == "full":
+            return mask_char * len(data)
+        elif mask_type == "partial":
+            if len(data) <= visible_chars * 2:
+                return mask_char * len(data)
+            return data[:visible_chars] + mask_char * (len(data) - visible_chars * 2) + data[-visible_chars:]
+        elif mask_type == "custom":
+            # Custom masking patterns
+            if re.match(r"^\d{16}$", data):  # Credit card
+                return f"{data[:4]}{mask_char * 8}{data[-4:]}"
+            elif re.match(r"^\d{3}-\d{2}-\d{4}$", data):  # SSN
+                return f"***-**-{data[-4:]}"
+            elif "@" in data:  # Email
+                username, domain = data.split("@")
+                return f"{username[0]}{mask_char * (len(username)-2)}{username[-1]}@{domain}"
+            else:
+                return mask_char * len(data)
+        return data
+
+    def encrypt_sensitive_data(self, data: str) -> Optional[str]:
+        """
+        Encrypt sensitive data using Fernet symmetric encryption.
+        
+        Args:
+            data (str): The data to encrypt
+            
+        Returns:
+            Optional[str]: Encrypted data or None if encryption failed
+        """
+        try:
+            if not self.fernet:
+                raise Exception("Encryption key not found")
+            return self.fernet.encrypt(data.encode()).decode()
+        except Exception as e:
+            print(f"Error encrypting data: {str(e)}")
+            return None
+
+    def decrypt_sensitive_data(self, encrypted_data: str) -> Optional[str]:
+        """
+        Decrypt sensitive data using Fernet symmetric encryption.
+        
+        Args:
+            encrypted_data (str): The encrypted data to decrypt
+            
+        Returns:
+            Optional[str]: Decrypted data or None if decryption failed
+        """
+        try:
+            if not self.fernet:
+                raise Exception("Encryption key not found")
+            return self.fernet.decrypt(encrypted_data.encode()).decode()
+        except Exception as e:
+            print(f"Error decrypting data: {str(e)}")
+            return None
+
+    def handle_sensitive_form_data(
+        self,
+        form_data: Dict[str, Any],
+        sensitive_fields: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Handle sensitive form data by masking and/or encrypting it.
+        
+        Args:
+            form_data (Dict[str, Any]): The form data to process
+            sensitive_fields (Dict[str, Dict[str, Any]]): Configuration for sensitive fields
+                {
+                    "field_name": {
+                        "type": "password|credit_card|ssn|email|custom",
+                        "mask": bool,
+                        "encrypt": bool,
+                        "mask_type": "full|partial|custom",
+                        "mask_char": str,
+                        "visible_chars": int
+                    }
+                }
+        
+        Returns:
+            Dict[str, Any]: Processed form data with sensitive information handled
+        """
+        processed_data = form_data.copy()
+        
+        for field_name, config in sensitive_fields.items():
+            if field_name not in processed_data:
+                continue
+                
+            value = str(processed_data[field_name])
+            
+            # Apply masking if configured
+            if config.get("mask", False):
+                mask_type = config.get("mask_type", "full")
+                mask_char = config.get("mask_char", "*")
+                visible_chars = config.get("visible_chars", 4)
+                
+                processed_data[field_name] = self.mask_sensitive_data(
+                    value,
+                    mask_type,
+                    mask_char,
+                    visible_chars
+                )
+            
+            # Apply encryption if configured
+            if config.get("encrypt", False):
+                encrypted_value = self.encrypt_sensitive_data(value)
+                if encrypted_value:
+                    processed_data[field_name] = encrypted_value
+        
+        return processed_data
+
     def handle_form_submission(
         self,
         url: str,
@@ -947,7 +1085,8 @@ class WebScraper:
         validation_config: Optional[Dict[str, Dict[str, Any]]] = None,
         is_ajax: bool = False,
         response_selector: Optional[str] = None,
-        field_dependencies: Optional[Dict[str, Dict[str, Any]]] = None
+        field_dependencies: Optional[Dict[str, Dict[str, Any]]] = None,
+        sensitive_fields: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Handle form submission on a webpage, including filling fields and submitting.
@@ -1009,6 +1148,17 @@ class WebScraper:
                             "value": Any
                         },
                         "logic": "and|or"
+                    }
+                }
+            sensitive_fields (Optional[Dict[str, Dict[str, Any]]]): Configuration for sensitive fields
+                {
+                    "field_name": {
+                        "type": "password|credit_card|ssn|email|custom",
+                        "mask": bool,
+                        "encrypt": bool,
+                        "mask_type": "full|partial|custom",
+                        "mask_char": str,
+                        "visible_chars": int
                     }
                 }
             
@@ -1088,6 +1238,10 @@ class WebScraper:
             # Handle field dependencies if configured
             if field_dependencies:
                 self.handle_field_dependencies(form, field_dependencies, timeout)
+            
+            # Handle sensitive data if configured
+            if sensitive_fields:
+                form_data = self.handle_sensitive_form_data(form_data, sensitive_fields)
             
             # Validate form if configured
             if validate_form and validation_config:
