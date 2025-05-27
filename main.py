@@ -23,6 +23,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.select import Select
+from selenium.webdriver.common.keys import Keys
+from pathlib import Path
+import mimetypes
+import base64
 
 load_dotenv()
 
@@ -335,11 +339,44 @@ class WebScraper:
                 self.driver.quit()
                 self.driver = None
 
+    def handle_file_upload(
+        self,
+        file_input_selector: str,
+        file_path: Union[str, Path],
+        timeout: int = 10
+    ) -> bool:
+        """
+        Handle file upload to a file input element.
+        
+        Args:
+            file_input_selector (str): CSS selector for the file input element
+            file_path (Union[str, Path]): Path to the file to upload
+            timeout (int): Maximum time to wait for the file input element
+            
+        Returns:
+            bool: True if upload was successful, False otherwise
+        """
+        try:
+            file_input = self._wait_for_element(file_input_selector, timeout)
+            if not file_input:
+                raise Exception(f"File input not found with selector: {file_input_selector}")
+            
+            # Convert path to absolute path
+            abs_path = str(Path(file_path).resolve())
+            
+            # Send the file path to the input element
+            file_input.send_keys(abs_path)
+            return True
+            
+        except Exception as e:
+            print(f"Error uploading file: {str(e)}")
+            return False
+
     def handle_form_submission(
         self,
         url: str,
         form_selector: str,
-        form_data: Dict[str, Union[str, bool, List[str]]],
+        form_data: Dict[str, Union[str, bool, List[str], Dict[str, str]]],  # Updated type hint
         submit_button_selector: Optional[str] = None,
         wait_for: Optional[str] = None,
         timeout: int = 10,
@@ -352,11 +389,12 @@ class WebScraper:
         Args:
             url (str): The URL containing the form
             form_selector (str): CSS selector for the form element
-            form_data (Dict[str, Union[str, bool, List[str]]]): Dictionary of form field names and values
+            form_data (Dict[str, Union[str, bool, List[str], Dict[str, str]]]): Dictionary of form field names and values
                 - For text inputs: {"field_name": "value"}
                 - For checkboxes: {"checkbox_name": True/False}
                 - For select/radio: {"select_name": "option_value"}
                 - For multiple select: {"select_name": ["option1", "option2"]}
+                - For file uploads: {"file_field": {"path": "/path/to/file", "selector": "#file-input"}}
             submit_button_selector (Optional[str]): CSS selector for the submit button
             wait_for (Optional[str]): CSS selector to wait for after form submission
             timeout (int): Maximum time to wait for elements (seconds)
@@ -380,7 +418,13 @@ class WebScraper:
             # Fill form fields
             for field_name, value in form_data.items():
                 try:
-                    # Handle different input types
+                    # Handle file uploads
+                    if isinstance(value, dict) and "path" in value and "selector" in value:
+                        if not self.handle_file_upload(value["selector"], value["path"], timeout):
+                            raise Exception(f"Failed to upload file for field {field_name}")
+                        continue
+                    
+                    # Handle other input types
                     input_element = form.find_element(By.NAME, field_name)
                     input_type = input_element.get_attribute("type")
                     
