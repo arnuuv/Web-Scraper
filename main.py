@@ -693,7 +693,90 @@ class WebScraper:
             time.sleep(check_interval)
         
         return False
+ def validate_form(
+        self,
+        form: Any,
+        validation_config: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, List[str]]:
+        """
+        Validate all form fields against specified validation rules.
+        
+        Args:
+            form: The form element to validate
+            validation_config: Dictionary of field validation rules
+                {
+                    "field_name": {
+                        "type": "email|phone|url|date|number|required|custom",
+                        "min_length": int,
+                        "max_length": int,
+                        "pattern": str,
+                        "custom": Callable,
+                        "error_message": str
+                    }
+                }
+        
+        Returns:
+            Dict[str, List[str]]: Dictionary of field names and their validation errors
+        """
+        validation_errors = {}
+        
+        for field_name, rules in validation_config.items():
+            try:
+                field_element = form.find_element(By.NAME, field_name)
+                errors = self.validate_form_field(field_element, rules)
+                if errors:
+                    validation_errors[field_name] = errors
+            except Exception as e:
+                print(f"Error validating field {field_name}: {str(e)}")
+                validation_errors[field_name] = ["Field not found"]
+        
+        return validation_errors
 
+    def wait_for_ajax(
+        self,
+        timeout: Optional[int] = None,
+        check_interval: float = 0.5
+    ) -> bool:
+        """
+        Wait for all AJAX requests to complete.
+        
+        Args:
+            timeout (Optional[int]): Maximum time to wait for AJAX requests
+            check_interval (float): Time between checks for AJAX completion
+            
+        Returns:
+            bool: True if all AJAX requests completed, False if timed out
+        """
+        timeout = timeout or self.ajax_timeout
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                # Check if jQuery is present and no active AJAX requests
+                jquery_ajax = self.driver.execute_script("""
+                    return (typeof jQuery !== 'undefined' && jQuery.active === 0) ||
+                           (typeof angular !== 'undefined' && angular.element(document).injector().get('$http').pendingRequests.length === 0);
+                """)
+                
+                # Check if fetch requests are complete
+                fetch_ajax = self.driver.execute_script("""
+                    return window.fetch === undefined || 
+                           !Array.from(document.querySelectorAll('script')).some(script => 
+                               script.textContent.includes('fetch(') && 
+                               script.textContent.includes('.then(')
+                           );
+                """)
+                
+                if jquery_ajax and fetch_ajax:
+                    return True
+                    
+            except Exception:
+                pass
+                
+            time.sleep(check_interval)
+        
+        return 
+    
     def handle_ajax_form_submission(
         self,
         form: Any,
