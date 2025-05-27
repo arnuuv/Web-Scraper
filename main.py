@@ -27,6 +27,9 @@ from selenium.webdriver.common.keys import Keys
 from pathlib import Path
 import mimetypes
 import base64
+from PIL import Image
+import io
+import re
 
 load_dotenv()
 
@@ -41,6 +44,7 @@ class WebScraper:
         self.max_retries = max_retries
         self.last_request_time = 0
         self.driver = None
+        self.captcha_api_key = os.getenv("CAPTCHA_API_KEY")  # Add your CAPTCHA solving service API key
 
     def _setup_selenium(self, headless: bool = True):
         """Set up Selenium WebDriver with Chrome options."""
@@ -372,16 +376,89 @@ class WebScraper:
             print(f"Error uploading file: {str(e)}")
             return False
 
+    def solve_captcha(
+        self,
+        captcha_selector: str,
+        captcha_type: str = "image",  # or "recaptcha" or "hcaptcha"
+        timeout: int = 10
+    ) -> Optional[str]:
+        """
+        Solve CAPTCHA using a CAPTCHA solving service.
+        
+        Args:
+            captcha_selector (str): CSS selector for the CAPTCHA element
+            captcha_type (str): Type of CAPTCHA ("image", "recaptcha", or "hcaptcha")
+            timeout (int): Maximum time to wait for the CAPTCHA element
+            
+        Returns:
+            Optional[str]: The solved CAPTCHA text or None if solving failed
+        """
+        try:
+            if not self.captcha_api_key:
+                raise Exception("CAPTCHA API key not found. Please set CAPTCHA_API_KEY environment variable.")
+
+            if captcha_type == "image":
+                # Handle image-based CAPTCHA
+                captcha_element = self._wait_for_element(captcha_selector, timeout)
+                if not captcha_element:
+                    raise Exception(f"CAPTCHA element not found with selector: {captcha_selector}")
+
+                # Get CAPTCHA image
+                img_base64 = captcha_element.screenshot_as_base64
+                img_data = base64.b64decode(img_base64)
+                
+                # Send to CAPTCHA solving service
+                response = requests.post(
+                    "https://api.captcha-service.com/solve",  # Replace with actual CAPTCHA service API
+                    headers={"Authorization": f"Bearer {self.captcha_api_key}"},
+                    json={
+                        "image": img_base64,
+                        "type": "image"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    return response.json()["solution"]
+                
+            elif captcha_type in ["recaptcha", "hcaptcha"]:
+                # Handle reCAPTCHA or hCaptcha
+                site_key = self.driver.find_element(By.CSS_SELECTOR, captcha_selector).get_attribute("data-sitekey")
+                
+                response = requests.post(
+                    "https://api.captcha-service.com/solve",  # Replace with actual CAPTCHA service API
+                    headers={"Authorization": f"Bearer {self.captcha_api_key}"},
+                    json={
+                        "site_key": site_key,
+                        "type": captcha_type,
+                        "url": self.driver.current_url
+                    }
+                )
+                
+                if response.status_code == 200:
+                    solution = response.json()["solution"]
+                    # Execute JavaScript to set the CAPTCHA response
+                    self.driver.execute_script(
+                        f'document.querySelector("{captcha_selector}").innerHTML = "{solution}";'
+                    )
+                    return solution
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error solving CAPTCHA: {str(e)}")
+            return None
+
     def handle_form_submission(
         self,
         url: str,
         form_selector: str,
-        form_data: Dict[str, Union[str, bool, List[str], Dict[str, str]]],  # Updated type hint
+        form_data: Dict[str, Union[str, bool, List[str], Dict[str, str]]],
         submit_button_selector: Optional[str] = None,
         wait_for: Optional[str] = None,
         timeout: int = 10,
         headless: bool = True,
-        validate_form: bool = True
+        validate_form: bool = True,
+        captcha_config: Optional[Dict[str, str]] = None  # New parameter
     ) -> Dict[str, Any]:
         """
         Handle form submission on a webpage, including filling fields and submitting.
@@ -400,6 +477,11 @@ class WebScraper:
             timeout (int): Maximum time to wait for elements (seconds)
             headless (bool): Whether to run browser in headless mode
             validate_form (bool): Whether to validate form fields before submission
+            captcha_config (Optional[Dict[str, str]]): Configuration for CAPTCHA handling
+                {
+                    "type": "image|recaptcha|hcaptcha",
+                    "selector": "CSS selector for CAPTCHA element"
+                }
             
         Returns:
             Dict[str, Any]: Dictionary containing submission status and response data
@@ -455,6 +537,20 @@ class WebScraper:
                     print(f"Error filling field {field_name}: {str(e)}")
                     if validate_form:
                         raise
+            
+            # Handle CAPTCHA if configured
+            if captcha_config:
+                captcha_solution = self.solve_captcha(
+                    captcha_config["selector"],
+                    captcha_config["type"],
+                    timeout
+                )
+                if not captcha_solution:
+                    raise Exception("Failed to solve CAPTCHA")
+                
+                # Add CAPTCHA solution to form data
+                if captcha_config["type"] == "image":
+                    form_data["captcha"] = captcha_solution
             
             # Submit form
             if submit_button_selector:
