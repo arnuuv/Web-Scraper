@@ -1,36 +1,28 @@
 # Advanced Web Scraper
 
-A powerful web scraping solution that combines JavaScript (Puppeteer) and Python capabilities for handling both static and dynamic web content.
+A powerful and feature-rich web scraper built with Python and Selenium, designed to handle complex web scraping tasks with robust error handling, form interactions, and data processing capabilities.
 
 ## Features
 
-### JavaScript Scraper (Puppeteer)
+### Core Scraping Capabilities
 
-- Full browser automation
-- Dynamic content handling
-- **Advanced auto-scroll with error correction**
-- Resource optimization
-- Network request monitoring
-- Screenshot capture (full page and element)
-- Infinite scroll support
-- Custom JavaScript execution
-- File download support
-- Cookie management (get/set/delete)
-- Device emulation and geolocation
-- Save page as PDF
-- **150+ DOM and scraping utility functions** (see `webscraper_features.js`)
-- Python integration
-
-### Python Scraper
-
-- Rate limiting
-- Proxy support
-- Advanced error handling
+- Dynamic content scraping using Selenium
+- Support for JavaScript-rendered pages
+- Rate limiting and retry mechanisms
 - Multiple export formats (JSON, CSV, Excel)
-- Async scraping capabilities
-- Interactive element handling
-- Form submission support
-- **Example main.py for quick start**
+- Pagination handling (infinite scroll, load more, page numbers)
+
+### Form Handling
+
+- Complex form submissions
+- Dynamic form fields
+- Field validation
+- AJAX form handling
+- File uploads
+- CAPTCHA solving
+- Form field dependencies
+- Sensitive data handling
+- Autofill and suggestions
 
 ## Installation
 
@@ -41,216 +33,288 @@ git clone https://github.com/yourusername/web-scraper.git
 cd web-scraper
 ```
 
-2. Install Python dependencies:
+2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Install Node.js dependencies:
+3. Set up environment variables:
 
 ```bash
-npm install
+cp .env.example .env
+```
+
+Edit `.env` and add your configuration:
+
+```
+ANTHROPIC_API_KEY=your_api_key_here
+CAPTCHA_API_KEY=your_captcha_service_key
+ENCRYPTION_KEY=your_encryption_key
+AUTOFILL_DATA_FILE=path/to/autofill_data.json
 ```
 
 ## Usage
 
-### Python Scraper Example (from main.py)
+### Basic Scraping
 
 ```python
-from main import WebScraper
+from web_scraper import WebScraper
 
 scraper = WebScraper()
-url = "https://example.com"
-selectors = {
-    "headings": "h1, h2, h3",
-    "paragraphs": "p",
-    "links": "a"
-}
-results = scraper.scrape_website(url, selectors)
-print(results)
+
+# Simple website scraping
+results = scraper.scrape_website(
+    url="https://example.com",
+    selectors={
+        "headings": "h1, h2, h3",
+        "paragraphs": "p",
+        "links": "a"
+    }
+)
 ```
 
-### JavaScript Scraper Example
+### Dynamic Content Scraping
 
-```javascript
-const JSScraper = require("./js_scraper.js");
+```python
+results = scraper.scrape_dynamic_content(
+    url="https://example.com",
+    selectors={
+        "products": ".product-item",
+        "prices": ".price",
+        "descriptions": ".description"
+    },
+    wait_for=".product-list",
+    timeout=10
+)
+```
 
-async function runScraper() {
-  const scraper = new JSScraper({
-    headless: true,
-    slowMo: 50,
-  });
+### Form Submission
 
-  try {
-    await scraper.initialize();
-    await scraper.navigate("https://example.com");
+```python
+result = scraper.handle_form_submission(
+    url="https://example.com/login",
+    form_selector="#login-form",
+    form_data={
+        "username": "testuser",
+        "password": "securepass123"
+    },
+    submit_button_selector="#submit-button",
+    wait_for=".dashboard"
+)
+```
 
-    // Extract data
-    const data = await scraper.extractData({
-      headings: "h1, h2, h3",
-      paragraphs: "p",
-      links: "a",
-    });
+### Advanced Form Features
 
-    // Advanced auto-scroll with error correction
-    const scrollResult = await scraper.advancedAutoScroll({
-      maxScrolls: 20,
-      delay: 1000,
-      maxRetries: 5,
-      untilSelector: ".end-of-content",
-    });
-    console.log("Auto-scroll result:", scrollResult);
+#### File Upload
 
-    // Download a file
-    await scraper.downloadFile("a.download-link");
-
-    // Cookie management
-    const cookies = await scraper.getCookies();
-    await scraper.setCookie({ name: "test", value: "123" });
-    await scraper.deleteCookie("test");
-
-    // Screenshot of a specific element
-    await scraper.captureElementScreenshot(".main-content");
-
-    // Device emulation
-    await scraper.emulateDevice("iPhone X");
-
-    // Set geolocation
-    await scraper.setGeolocation(37.7749, -122.4194);
-
-    // Save page as PDF
-    await scraper.saveAsPDF({ path: "page.pdf" });
-
-    // Use utility functions from webscraper_features.js in browser context
-    // Example: await scraper.page.evaluate(getAllLinks);
-
-    // Take a full page screenshot
-    await scraper.captureScreenshot({ fullPage: true });
-
-    console.log(data);
-  } finally {
-    await scraper.close();
-  }
+```python
+form_data = {
+    "profile_picture": {
+        "path": "/path/to/image.jpg",
+        "selector": "#profile-upload"
+    }
 }
 ```
 
-### Utility Functions
+#### CAPTCHA Handling
 
-See `webscraper_features.js` for **150+ ready-to-use DOM and scraping helpers**, such as:
-
-- `getAllLinks()`
-- `getAllImages()`
-- `getTextBySelector(selector)`
-- `waitForElement(selector, timeout)`
-- `scrollToBottom()`
-- ...and many more!
-
-You can use these in Puppeteer like:
-
-```javascript
-const links = await scraper.page.evaluate(getAllLinks);
+```python
+captcha_config = {
+    "type": "recaptcha",  # or "image" or "hcaptcha"
+    "selector": ".g-recaptcha"
+}
 ```
 
-### Integration
+#### Form Validation
 
-You can export data from JS to Python and vice versa. See the `exportToPython` method in `js_scraper.js`.
+```python
+validation_config = {
+    "email": {
+        "type": "email",
+        "required": True
+    },
+    "password": {
+        "type": "custom",
+        "min_length": 8,
+        "pattern": r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$"
+    }
+}
+```
+
+#### Field Dependencies
+
+```python
+field_dependencies = {
+    "billing_address": {
+        "conditions": [
+            {
+                "field": "payment_method",
+                "operator": "equals",
+                "value": "credit_card"
+            }
+        ],
+        "action": {
+            "type": "show"
+        },
+        "logic": "and"
+    }
+}
+```
+
+#### Sensitive Data Handling
+
+```python
+sensitive_fields = {
+    "password": {
+        "type": "password",
+        "mask": True,
+        "encrypt": True,
+        "mask_type": "full"
+    },
+    "credit_card": {
+        "type": "credit_card",
+        "mask": True,
+        "mask_type": "custom"
+    }
+}
+```
+
+#### Autofill and Suggestions
+
+```python
+autofill_config = {
+    "email": {
+        "type": "email",
+        "use_saved": True,
+        "save_new": True,
+        "suggestions": ["user@example.com", "admin@example.com"]
+    }
+}
+```
 
 ## Features in Detail
 
-### JavaScript Scraper Features
+### 1. File Upload Support
 
-1. **Browser Automation**
-   - Headless mode support
-   - Custom viewport settings
-   - User agent rotation
-   - Resource blocking
-2. **Data Extraction**
-   - CSS selector-based extraction
-   - Custom JavaScript execution
-   - Dynamic content handling
-   - Structured data output
-3. **Performance**
-   - Resource optimization
-   - Request interception
-   - Network monitoring
-   - Error handling
-4. **Advanced Features**
-   - Auto-scroll with error correction
-   - File download
-   - Cookie management
-   - Device emulation
-   - Geolocation
-   - Save as PDF
-   - Element screenshot
-   - 150+ DOM helpers
+- Handles multiple file types
+- Validates file existence and permissions
+- Supports custom file input selectors
+- Integrates with form submission
 
-### Python Scraper Features
+### 2. CAPTCHA Handling
 
-1. **Advanced Scraping**
-   - Rate limiting
-   - Proxy support
-   - Retry mechanism
-   - Async capabilities
-2. **Data Export**
-   - JSON export
-   - CSV export
-   - Excel export
-   - Custom formatting
-3. **Interactive Features**
-   - Form handling
-   - Popup management
-   - Dynamic table extraction
-   - Infinite scroll support
+- Supports multiple CAPTCHA types:
+  - Image-based CAPTCHAs
+  - reCAPTCHA
+  - hCaptcha
+- Integrates with CAPTCHA solving services
+- Handles both synchronous and asynchronous CAPTCHAs
+- Provides detailed error reporting
 
-## Configuration
+### 3. Dynamic Form Fields
 
-### JavaScript Configuration
+- Handles fields that appear based on user input
+- Supports complex field dependencies
+- Manages field visibility and state
+- Handles dynamic validation rules
 
-```javascript
-const options = {
-  headless: true,
-  slowMo: 50,
-  timeout: 30000,
-  viewport: { width: 1920, height: 1080 },
-};
-```
+### 4. Form Validation
 
-### Python Configuration
+- Built-in validation rules:
+  - Email
+  - Phone
+  - URL
+  - Date
+  - Number
+  - Required fields
+  - Custom patterns
+- Field-level and form-level validation
+- Detailed error reporting
 
-```python
-options = {
-    rate_limit: 2.0,
-    max_retries: 3,
-    proxy_list: ["http://proxy1:8080"],
-    timeout: 30
-}
-```
+### 5. AJAX Form Handling
+
+- Supports AJAX form submissions
+- Waits for AJAX responses
+- Handles dynamic content updates
+- Monitors jQuery and fetch requests
+
+### 6. Field Dependencies
+
+- Complex field relationships
+- Multiple condition types:
+  - Equals
+  - Not equals
+  - Contains
+  - Greater than
+  - Less than
+  - Empty/not empty
+  - Checked/not checked
+- AND/OR logic for conditions
+
+### 7. Sensitive Data Handling
+
+- Data masking:
+  - Full masking
+  - Partial masking
+  - Custom patterns
+- Encryption using Fernet
+- Secure storage
+- Custom masking patterns for:
+  - Credit cards
+  - Social security numbers
+  - Email addresses
+
+### 8. Form Field Autofill
+
+- Saves and loads form data
+- Interactive suggestion dropdowns
+- Custom autofill handlers
+- Persistent storage
+- Field type detection
+- Smart value suggestions
 
 ## Error Handling
 
-Both scrapers include comprehensive error handling:
+The scraper includes comprehensive error handling:
 
 - Network errors
 - Timeout handling
-- Resource loading errors
 - Element not found errors
-- Browser automation errors
+- Validation errors
+- CAPTCHA errors
+- Form submission errors
+- File upload errors
+
+## Best Practices
+
+1. **Rate Limiting**
+
+   - Always use appropriate rate limits
+   - Respect website robots.txt
+   - Implement exponential backoff
+
+2. **Error Handling**
+
+   - Always check return values
+   - Implement proper logging
+   - Handle edge cases
+
+3. **Security**
+
+   - Use environment variables for sensitive data
+   - Encrypt sensitive information
+   - Validate all inputs
+
+4. **Performance**
+   - Use headless mode when possible
+   - Implement proper timeouts
+   - Clean up resources
 
 ## Contributing
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Puppeteer for browser automation
-- BeautifulSoup for HTML parsing
-- Selenium for Python browser automation
