@@ -14,7 +14,7 @@ import json
 import csv
 import pandas as pd
 import time
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -22,6 +22,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.select import Select
 
 load_dotenv()
 
@@ -328,6 +329,117 @@ class WebScraper:
         except Exception as e:
             print(f"Error scraping paginated content from {url}: {str(e)}")
             return {}
+            
+        finally:
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+
+    def handle_form_submission(
+        self,
+        url: str,
+        form_selector: str,
+        form_data: Dict[str, Union[str, bool, List[str]]],
+        submit_button_selector: Optional[str] = None,
+        wait_for: Optional[str] = None,
+        timeout: int = 10,
+        headless: bool = True,
+        validate_form: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Handle form submission on a webpage, including filling fields and submitting.
+        
+        Args:
+            url (str): The URL containing the form
+            form_selector (str): CSS selector for the form element
+            form_data (Dict[str, Union[str, bool, List[str]]]): Dictionary of form field names and values
+                - For text inputs: {"field_name": "value"}
+                - For checkboxes: {"checkbox_name": True/False}
+                - For select/radio: {"select_name": "option_value"}
+                - For multiple select: {"select_name": ["option1", "option2"]}
+            submit_button_selector (Optional[str]): CSS selector for the submit button
+            wait_for (Optional[str]): CSS selector to wait for after form submission
+            timeout (int): Maximum time to wait for elements (seconds)
+            headless (bool): Whether to run browser in headless mode
+            validate_form (bool): Whether to validate form fields before submission
+            
+        Returns:
+            Dict[str, Any]: Dictionary containing submission status and response data
+        """
+        try:
+            if not self.driver:
+                self._setup_selenium(headless)
+            
+            self.driver.get(url)
+            
+            # Wait for form to be present
+            form = self._wait_for_element(form_selector, timeout)
+            if not form:
+                raise Exception(f"Form not found with selector: {form_selector}")
+            
+            # Fill form fields
+            for field_name, value in form_data.items():
+                try:
+                    # Handle different input types
+                    input_element = form.find_element(By.NAME, field_name)
+                    input_type = input_element.get_attribute("type")
+                    
+                    if input_type == "checkbox":
+                        if input_element.is_selected() != value:
+                            input_element.click()
+                    
+                    elif input_type == "radio":
+                        if value:
+                            radio = form.find_element(By.CSS_SELECTOR, f"input[name='{field_name}'][value='{value}']")
+                            radio.click()
+                    
+                    elif input_element.tag_name.lower() == "select":
+                        select = Select(input_element)
+                        if isinstance(value, list):
+                            # Handle multiple select
+                            for option in value:
+                                select.select_by_value(option)
+                        else:
+                            select.select_by_value(str(value))
+                    
+                    else:
+                        # Handle text inputs
+                        input_element.clear()
+                        input_element.send_keys(str(value))
+                        
+                except Exception as e:
+                    print(f"Error filling field {field_name}: {str(e)}")
+                    if validate_form:
+                        raise
+            
+            # Submit form
+            if submit_button_selector:
+                submit_button = form.find_element(By.CSS_SELECTOR, submit_button_selector)
+                submit_button.click()
+            else:
+                form.submit()
+            
+            # Wait for response if specified
+            if wait_for:
+                self._wait_for_element(wait_for, timeout)
+            
+            # Get response data
+            response_data = {
+                "status": "success",
+                "current_url": self.driver.current_url,
+                "page_title": self.driver.title,
+                "form_submitted": True
+            }
+            
+            return response_data
+            
+        except Exception as e:
+            print(f"Error submitting form on {url}: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "form_submitted": False
+            }
             
         finally:
             if self.driver:
