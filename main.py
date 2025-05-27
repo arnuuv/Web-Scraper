@@ -448,6 +448,61 @@ class WebScraper:
             print(f"Error solving CAPTCHA: {str(e)}")
             return None
 
+    def handle_dynamic_form_fields(
+        self,
+        form: Any,
+        field_dependencies: Dict[str, Dict[str, Any]],
+        timeout: int = 10
+    ) -> None:
+        """
+        Handle dynamic form fields that appear based on user input.
+        
+        Args:
+            form: The form element
+            field_dependencies: Dictionary defining field dependencies and their conditions
+                {
+                    "field_name": {
+                        "trigger_field": "name of field that triggers this field",
+                        "trigger_value": "value that triggers this field",
+                        "selector": "CSS selector for the dynamic field",
+                        "value": "value to set in the dynamic field"
+                    }
+                }
+            timeout (int): Maximum time to wait for dynamic fields
+        """
+        for field_name, config in field_dependencies.items():
+            try:
+                # Wait for trigger field to be present
+                trigger_field = form.find_element(By.NAME, config["trigger_field"])
+                trigger_value = str(config["trigger_value"])
+                
+                # Set trigger field value
+                if trigger_field.get_attribute("type") == "checkbox":
+                    if trigger_field.is_selected() != (trigger_value.lower() == "true"):
+                        trigger_field.click()
+                else:
+                    trigger_field.clear()
+                    trigger_field.send_keys(trigger_value)
+                
+                # Wait for dynamic field to appear
+                dynamic_field = WebDriverWait(form, timeout).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, config["selector"]))
+                )
+                
+                # Set value in dynamic field
+                if dynamic_field.tag_name.lower() == "select":
+                    Select(dynamic_field).select_by_value(str(config["value"]))
+                elif dynamic_field.get_attribute("type") == "checkbox":
+                    if dynamic_field.is_selected() != (str(config["value"]).lower() == "true"):
+                        dynamic_field.click()
+                else:
+                    dynamic_field.clear()
+                    dynamic_field.send_keys(str(config["value"]))
+                
+            except Exception as e:
+                print(f"Error handling dynamic field {field_name}: {str(e)}")
+                continue
+
     def handle_form_submission(
         self,
         url: str,
@@ -458,7 +513,8 @@ class WebScraper:
         timeout: int = 10,
         headless: bool = True,
         validate_form: bool = True,
-        captcha_config: Optional[Dict[str, str]] = None  # New parameter
+        captcha_config: Optional[Dict[str, str]] = None,
+        dynamic_fields: Optional[Dict[str, Dict[str, Any]]] = None  # New parameter
     ) -> Dict[str, Any]:
         """
         Handle form submission on a webpage, including filling fields and submitting.
@@ -481,6 +537,15 @@ class WebScraper:
                 {
                     "type": "image|recaptcha|hcaptcha",
                     "selector": "CSS selector for CAPTCHA element"
+                }
+            dynamic_fields (Optional[Dict[str, Dict[str, Any]]]): Configuration for dynamic form fields
+                {
+                    "field_name": {
+                        "trigger_field": "name of field that triggers this field",
+                        "trigger_value": "value that triggers this field",
+                        "selector": "CSS selector for the dynamic field",
+                        "value": "value to set in the dynamic field"
+                    }
                 }
             
         Returns:
@@ -551,6 +616,10 @@ class WebScraper:
                 # Add CAPTCHA solution to form data
                 if captcha_config["type"] == "image":
                     form_data["captcha"] = captcha_solution
+            
+            # Handle dynamic fields if configured
+            if dynamic_fields:
+                self.handle_dynamic_form_fields(form, dynamic_fields, timeout)
             
             # Submit form
             if submit_button_selector:
