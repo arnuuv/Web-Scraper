@@ -95,6 +95,8 @@ class WebScraper:
             self.fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(self.encryption_key.encode()).digest()))
         else:
             self.fernet = None
+        self.autofill_data_file = os.getenv("AUTOFILL_DATA_FILE", "autofill_data.json")
+        self.autofill_data = self._load_autofill_data()
 
     def _setup_selenium(self, headless: bool = True):
         """Set up Selenium WebDriver with Chrome options."""
@@ -1070,6 +1072,131 @@ class WebScraper:
         
         return processed_data
 
+    def _load_autofill_data(self) -> Dict[str, Any]:
+        """Load autofill data from file."""
+        try:
+            if Path(self.autofill_data_file).exists():
+                with open(self.autofill_data_file, 'r') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            print(f"Error loading autofill data: {str(e)}")
+            return {}
+
+    def _save_autofill_data(self) -> None:
+        """Save autofill data to file."""
+        try:
+            with open(self.autofill_data_file, 'w') as f:
+                json.dump(self.autofill_data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving autofill data: {str(e)}")
+
+    def handle_autofill(
+        self,
+        form: Any,
+        autofill_config: Dict[str, Dict[str, Any]],
+        save_new_data: bool = True
+    ) -> None:
+        """
+        Handle form field autofill and suggestions.
+        
+        Args:
+            form: The form element
+            autofill_config: Dictionary defining autofill behavior
+                {
+                    "field_name": {
+                        "type": "text|email|phone|address|credit_card|custom",
+                        "use_saved": bool,
+                        "save_new": bool,
+                        "suggestions": List[str],
+                        "custom_handler": Callable
+                    }
+                }
+            save_new_data (bool): Whether to save new field values
+        """
+        for field_name, config in autofill_config.items():
+            try:
+                field_element = form.find_element(By.NAME, field_name)
+                field_type = field_element.get_attribute("type")
+                
+                # Get current field value
+                current_value = field_element.get_attribute("value")
+                
+                # Handle autofill based on configuration
+                if config.get("use_saved", True) and field_name in self.autofill_data:
+                    # Use saved value
+                    saved_value = self.autofill_data[field_name]
+                    if current_value != saved_value:
+                        field_element.clear()
+                        field_element.send_keys(saved_value)
+                
+                elif config.get("suggestions"):
+                    # Handle suggestions
+                    suggestions = config["suggestions"]
+                    if suggestions and not current_value:
+                        # Create and show suggestions dropdown
+                        self.driver.execute_script("""
+                            const field = arguments[0];
+                            const suggestions = arguments[1];
+                            
+                            // Create suggestions container
+                            const container = document.createElement('div');
+                            container.style.position = 'absolute';
+                            container.style.zIndex = '1000';
+                            container.style.backgroundColor = 'white';
+                            container.style.border = '1px solid #ccc';
+                            container.style.maxHeight = '200px';
+                            container.style.overflowY = 'auto';
+                            
+                            // Add suggestion items
+                            suggestions.forEach(suggestion => {
+                                const item = document.createElement('div');
+                                item.textContent = suggestion;
+                                item.style.padding = '5px 10px';
+                                item.style.cursor = 'pointer';
+                                item.onmouseover = () => item.style.backgroundColor = '#f0f0f0';
+                                item.onmouseout = () => item.style.backgroundColor = 'white';
+                                item.onclick = () => {
+                                    field.value = suggestion;
+                                    container.remove();
+                                };
+                                container.appendChild(item);
+                            });
+                            
+                            // Position and show container
+                            const rect = field.getBoundingClientRect();
+                            container.style.top = (rect.bottom + window.scrollY) + 'px';
+                            container.style.left = (rect.left + window.scrollX) + 'px';
+                            container.style.width = rect.width + 'px';
+                            document.body.appendChild(container);
+                            
+                            // Remove container when clicking outside
+                            document.addEventListener('click', function removeContainer(e) {
+                                if (!container.contains(e.target) && e.target !== field) {
+                                    container.remove();
+                                    document.removeEventListener('click', removeContainer);
+                                }
+                            });
+                        """, field_element, suggestions)
+                
+                elif config.get("custom_handler"):
+                    # Use custom handler
+                    custom_value = config["custom_handler"](field_element, current_value)
+                    if custom_value and custom_value != current_value:
+                        field_element.clear()
+                        field_element.send_keys(custom_value)
+                
+                # Save new value if configured
+                if save_new_data and config.get("save_new", True):
+                    new_value = field_element.get_attribute("value")
+                    if new_value and new_value != current_value:
+                        self.autofill_data[field_name] = new_value
+                        self._save_autofill_data()
+                
+            except Exception as e:
+                print(f"Error handling autofill for field {field_name}: {str(e)}")
+                continue
+
     def handle_form_submission(
         self,
         url: str,
@@ -1086,7 +1213,8 @@ class WebScraper:
         is_ajax: bool = False,
         response_selector: Optional[str] = None,
         field_dependencies: Optional[Dict[str, Dict[str, Any]]] = None,
-        sensitive_fields: Optional[Dict[str, Dict[str, Any]]] = None
+        sensitive_fields: Optional[Dict[str, Dict[str, Any]]] = None,
+        autofill_config: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Handle form submission on a webpage, including filling fields and submitting.
@@ -1159,6 +1287,16 @@ class WebScraper:
                         "mask_type": "full|partial|custom",
                         "mask_char": str,
                         "visible_chars": int
+                    }
+                }
+            autofill_config (Optional[Dict[str, Dict[str, Any]]]): Configuration for form field autofill
+                {
+                    "field_name": {
+                        "type": "text|email|phone|address|credit_card|custom",
+                        "use_saved": bool,
+                        "save_new": bool,
+                        "suggestions": List[str],
+                        "custom_handler": Callable
                     }
                 }
             
@@ -1242,6 +1380,10 @@ class WebScraper:
             # Handle sensitive data if configured
             if sensitive_fields:
                 form_data = self.handle_sensitive_form_data(form_data, sensitive_fields)
+            
+            # Handle autofill if configured
+            if autofill_config:
+                self.handle_autofill(form, autofill_config)
             
             # Validate form if configured
             if validate_form and validation_config:
